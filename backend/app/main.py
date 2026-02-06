@@ -1,0 +1,104 @@
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import settings
+from app.database import engine, Base
+from app.routers import channels, messages, stats, analysis
+from app.services.scheduler import start_scheduler, stop_scheduler
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: startup and shutdown events."""
+    # Startup
+    logger.info("Starting Spy Affiliation Trading backend...")
+
+    # Create database tables
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created/verified.")
+    except Exception as e:
+        logger.error(f"Failed to create database tables: {e}")
+
+    # Start the scheduler
+    try:
+        start_scheduler()
+        logger.info("Scheduler started.")
+    except Exception as e:
+        logger.error(f"Failed to start scheduler: {e}")
+
+    yield
+
+    # Shutdown
+    logger.info("Shutting down Spy Affiliation Trading backend...")
+    stop_scheduler()
+    logger.info("Application shutdown complete.")
+
+
+app = FastAPI(
+    title="Spy Affiliation Trading API",
+    description=(
+        "API for monitoring and analyzing Telegram affiliate marketing "
+        "and trading channels. Scrape messages, analyze content with AI, "
+        "and track engagement metrics."
+    ),
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# CORS configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        settings.FRONTEND_URL,
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:8080",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include routers
+app.include_router(channels.router)
+app.include_router(messages.router)
+app.include_router(stats.router)
+app.include_router(analysis.router)
+
+
+@app.get("/", tags=["root"])
+def root() -> dict:
+    """Root endpoint with API information."""
+    return {
+        "name": "Spy Affiliation Trading API",
+        "version": "1.0.0",
+        "description": "Telegram affiliate channel monitoring and analysis",
+        "docs_url": "/docs",
+        "redoc_url": "/redoc",
+    }
+
+
+@app.get("/health", tags=["health"])
+def health_check() -> dict:
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "database_url_configured": bool(settings.DATABASE_URL),
+        "telegram_configured": bool(
+            settings.TELEGRAM_API_ID and settings.TELEGRAM_API_HASH
+        ),
+        "anthropic_configured": bool(settings.ANTHROPIC_API_KEY),
+    }
