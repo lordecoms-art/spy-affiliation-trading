@@ -321,18 +321,46 @@ const useAppStore = create((set, get) => ({
 
   // Scrape all messages
   scrapingAll: false,
-  scrapeAllMessages: async () => {
+  scrapeProgress: null,
+  scrapeAllMessages: async (sinceDate = '2026-01-01') => {
     set({ scrapingAll: true });
     try {
-      const response = await api.post('/messages/scrape-all');
+      const response = await api.post(`/messages/scrape-all?since_date=${sinceDate}&auto_analyze=true`);
       console.log('Scrape-all result:', response.data);
-      set({ scrapingAll: false });
+      // Don't set scrapingAll to false yet - background task is running
+      // Poll scrape-status until done
+      if (response.data.status === 'started') {
+        get()._pollScrapeStatus();
+      } else {
+        set({ scrapingAll: false });
+      }
       return response.data;
     } catch (error) {
       console.error('Failed to scrape all:', error);
       set({ scrapingAll: false });
       throw error;
     }
+  },
+
+  _pollScrapeStatus: async () => {
+    const poll = async () => {
+      try {
+        const response = await api.get('/messages/scrape-status');
+        const progress = response.data;
+        set({ scrapeProgress: progress });
+        if (progress.status === 'in_progress') {
+          setTimeout(poll, 3000);
+        } else {
+          set({ scrapingAll: false });
+          // Refresh data after scrape is done
+          get().fetchStats();
+          get().fetchAnalysis();
+        }
+      } catch {
+        set({ scrapingAll: false });
+      }
+    };
+    poll();
   },
 
   // Run AI analysis

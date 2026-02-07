@@ -1,11 +1,13 @@
 import asyncio
 import base64
+import json
 import logging
 import random
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from telethon import TelegramClient
+from telethon.errors import FloodWaitError
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import (
@@ -165,6 +167,96 @@ class TelegramScraper:
             logger.error(f"Error enriching channel {telegram_id}: {e}")
             return None
 
+    def _parse_message(self, msg) -> Optional[Dict[str, Any]]:
+        """Parse a single Telethon message into a dict."""
+        if msg is None or msg.id is None:
+            return None
+
+        content_type = "text"
+        media_url = None
+        voice_duration = None
+
+        if msg.media:
+            if isinstance(msg.media, MessageMediaPhoto):
+                content_type = "photo"
+            elif isinstance(msg.media, MessageMediaDocument):
+                doc = msg.media.document
+                if doc:
+                    for attr in doc.attributes:
+                        attr_name = type(attr).__name__
+                        if attr_name == "DocumentAttributeVideo":
+                            content_type = "video"
+                            break
+                        elif attr_name == "DocumentAttributeAudio":
+                            if getattr(attr, "voice", False):
+                                content_type = "voice"
+                                voice_duration = getattr(attr, "duration", None)
+                            break
+                        elif attr_name == "DocumentAttributeSticker":
+                            content_type = "sticker"
+                            break
+                    else:
+                        content_type = "document"
+
+        # Extract external links
+        external_links: List[str] = []
+        if msg.entities:
+            for ent in msg.entities:
+                ent_type = type(ent).__name__
+                if ent_type == "MessageEntityUrl" and msg.text:
+                    url = msg.text[ent.offset : ent.offset + ent.length]
+                    external_links.append(url)
+                elif ent_type == "MessageEntityTextUrl":
+                    url = getattr(ent, "url", "")
+                    if url:
+                        external_links.append(url)
+
+        # Detect CTA
+        has_cta = False
+        cta_text = None
+        cta_link = None
+        if msg.reply_markup:
+            markup_type = type(msg.reply_markup).__name__
+            if markup_type == "ReplyInlineMarkup":
+                for row in msg.reply_markup.rows:
+                    for button in row.buttons:
+                        btn_type = type(button).__name__
+                        if btn_type == "KeyboardButtonUrl":
+                            has_cta = True
+                            cta_text = getattr(button, "text", None)
+                            cta_link = getattr(button, "url", None)
+                            break
+                    if has_cta:
+                        break
+
+        views = getattr(msg, "views", 0) or 0
+        forwards = getattr(msg, "forwards", 0) or 0
+        replies_count = 0
+        if msg.replies:
+            replies_count = getattr(msg.replies, "replies", 0) or 0
+
+        reactions_count = 0
+        if hasattr(msg, "reactions") and msg.reactions:
+            for result in getattr(msg.reactions, "results", []):
+                reactions_count += getattr(result, "count", 0)
+
+        return {
+            "telegram_message_id": msg.id,
+            "content_type": content_type,
+            "text_content": msg.text or msg.message or None,
+            "media_url": media_url,
+            "voice_duration": voice_duration,
+            "views_count": views,
+            "forwards_count": forwards,
+            "replies_count": replies_count,
+            "reactions_count": reactions_count,
+            "external_links": json.dumps(external_links) if external_links else None,
+            "has_cta": has_cta,
+            "cta_text": cta_text,
+            "cta_link": cta_link,
+            "posted_at": msg.date.replace(tzinfo=None) if msg.date else None,
+        }
+
     async def get_channel_messages(
         self,
         channel_identifier: str,
@@ -193,111 +285,13 @@ class TelegramScraper:
             )
 
             messages = await self.rate_limited_request(
-                self.client.get_messages(
-                    entity,
-                    limit=limit,
-                    min_id=min_id,
-                )
+                self.client.get_messages(entity, limit=limit, min_id=min_id)
             )
 
             for msg in messages:
-                if msg is None or msg.id is None:
-                    continue
-
-                content_type = "text"
-                media_url = None
-                voice_duration = None
-
-                if msg.media:
-                    if isinstance(msg.media, MessageMediaPhoto):
-                        content_type = "photo"
-                    elif isinstance(msg.media, MessageMediaDocument):
-                        doc = msg.media.document
-                        if doc:
-                            for attr in doc.attributes:
-                                attr_name = type(attr).__name__
-                                if attr_name == "DocumentAttributeVideo":
-                                    content_type = "video"
-                                    break
-                                elif attr_name == "DocumentAttributeAudio":
-                                    if getattr(attr, "voice", False):
-                                        content_type = "voice"
-                                        voice_duration = getattr(
-                                            attr, "duration", None
-                                        )
-                                    break
-                                elif attr_name == "DocumentAttributeSticker":
-                                    content_type = "sticker"
-                                    break
-                            else:
-                                content_type = "document"
-
-                # Extract external links from message text
-                external_links: List[str] = []
-                if msg.entities:
-                    for ent in msg.entities:
-                        ent_type = type(ent).__name__
-                        if ent_type == "MessageEntityUrl" and msg.text:
-                            url = msg.text[ent.offset : ent.offset + ent.length]
-                            external_links.append(url)
-                        elif ent_type == "MessageEntityTextUrl":
-                            url = getattr(ent, "url", "")
-                            if url:
-                                external_links.append(url)
-
-                # Detect CTA
-                has_cta = False
-                cta_text = None
-                cta_link = None
-                if msg.reply_markup:
-                    markup_type = type(msg.reply_markup).__name__
-                    if markup_type == "ReplyInlineMarkup":
-                        for row in msg.reply_markup.rows:
-                            for button in row.buttons:
-                                btn_type = type(button).__name__
-                                if btn_type == "KeyboardButtonUrl":
-                                    has_cta = True
-                                    cta_text = getattr(button, "text", None)
-                                    cta_link = getattr(button, "url", None)
-                                    break
-                            if has_cta:
-                                break
-
-                views = getattr(msg, "views", 0) or 0
-                forwards = getattr(msg, "forwards", 0) or 0
-                replies_count = 0
-                if msg.replies:
-                    replies_count = getattr(msg.replies, "replies", 0) or 0
-
-                reactions_count = 0
-                if hasattr(msg, "reactions") and msg.reactions:
-                    for result in getattr(msg.reactions, "results", []):
-                        reactions_count += getattr(result, "count", 0)
-
-                import json
-
-                messages_data.append(
-                    {
-                        "telegram_message_id": msg.id,
-                        "content_type": content_type,
-                        "text_content": msg.text or msg.message or None,
-                        "media_url": media_url,
-                        "voice_duration": voice_duration,
-                        "views_count": views,
-                        "forwards_count": forwards,
-                        "replies_count": replies_count,
-                        "reactions_count": reactions_count,
-                        "external_links": json.dumps(external_links)
-                        if external_links
-                        else None,
-                        "has_cta": has_cta,
-                        "cta_text": cta_text,
-                        "cta_link": cta_link,
-                        "posted_at": msg.date.replace(tzinfo=None)
-                        if msg.date
-                        else None,
-                    }
-                )
+                parsed = self._parse_message(msg)
+                if parsed:
+                    messages_data.append(parsed)
 
             logger.info(
                 f"Fetched {len(messages_data)} messages from {channel_identifier}"
@@ -309,6 +303,88 @@ class TelegramScraper:
                 f"Error fetching messages from {channel_identifier}: {e}"
             )
             return messages_data
+
+    async def iter_channel_messages_since(
+        self,
+        channel_identifier: str,
+        since_date: datetime,
+        min_id: int = 0,
+        batch_size: int = 50,
+    ) -> AsyncIterator[List[Dict[str, Any]]]:
+        """
+        Iterate over ALL channel messages since a given date, yielding batches.
+
+        Uses client.iter_messages with offset_date and reverse=True to walk
+        forward from since_date. Handles FloodWaitError by sleeping the
+        required seconds then resuming. Yields batches of batch_size messages.
+
+        Args:
+            channel_identifier: Channel username or numeric ID string.
+            since_date: Only fetch messages posted on or after this date.
+            min_id: Only fetch messages with telegram ID > min_id (incremental).
+            batch_size: Number of messages per yielded batch (default 50).
+
+        Yields:
+            Lists of message dictionaries (each list up to batch_size items).
+        """
+        total = 0
+        batch: List[Dict[str, Any]] = []
+
+        try:
+            if not self._connected:
+                await self.connect()
+
+            entity = await self.rate_limited_request(
+                self.client.get_entity(channel_identifier)
+            )
+
+            # Ensure since_date is timezone-aware for Telethon
+            if since_date.tzinfo is None:
+                since_date = since_date.replace(tzinfo=timezone.utc)
+
+            async for msg in self.client.iter_messages(
+                entity,
+                offset_date=since_date,
+                reverse=True,
+                min_id=min_id,
+                limit=None,
+            ):
+                parsed = self._parse_message(msg)
+                if parsed:
+                    batch.append(parsed)
+                    total += 1
+
+                if len(batch) >= batch_size:
+                    yield batch
+                    batch = []
+                    # Rate limit: pause between batches
+                    await asyncio.sleep(random.uniform(1.0, 2.0))
+
+        except FloodWaitError as e:
+            logger.warning(
+                f"FloodWaitError for {channel_identifier}: sleeping {e.seconds}s"
+            )
+            # Yield what we have before sleeping
+            if batch:
+                yield batch
+                batch = []
+            await asyncio.sleep(e.seconds + 1)
+            # After flood wait, yield a sentinel empty batch to signal caller
+            # that iteration was interrupted (caller can retry if needed)
+            logger.info(f"Resumed after FloodWait for {channel_identifier}")
+
+        except Exception as e:
+            logger.error(
+                f"Error iterating messages from {channel_identifier}: {e}"
+            )
+
+        # Yield remaining messages
+        if batch:
+            yield batch
+
+        logger.info(
+            f"Channel {channel_identifier}: {total} messages scraped since {since_date.date()}"
+        )
 
     async def get_joined_channels(self) -> List[Dict[str, Any]]:
         """

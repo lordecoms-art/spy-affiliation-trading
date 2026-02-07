@@ -21,6 +21,7 @@ export default function MessagesAnalysis() {
     analysisLoading,
     scrapingAll,
     analyzingAll,
+    scrapeProgress,
     fetchAnalysis,
     fetchChannels,
     scrapeAllMessages,
@@ -124,7 +125,7 @@ export default function MessagesAnalysis() {
           ) : (
             <Download className="w-4 h-4" />
           )}
-          <span>{scrapingAll ? 'Scraping...' : 'Scrape Messages'}</span>
+          <span>{scrapingAll ? 'Scraping...' : 'Scrape All Messages'}</span>
         </button>
         <button
           onClick={handleAnalyze}
@@ -139,6 +140,46 @@ export default function MessagesAnalysis() {
           <span>{analyzingAll ? 'Analyzing...' : 'Run AI Analysis'}</span>
         </button>
       </div>
+
+      {/* Scrape Progress */}
+      {scrapeProgress && scrapeProgress.status === 'in_progress' && (
+        <Card>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-zinc-300">
+                Scraping in progress...
+              </h3>
+              <span className="text-xs text-zinc-500">
+                {scrapeProgress.channels_done}/{scrapeProgress.channels_total} channels
+              </span>
+            </div>
+            <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-cyan-500 rounded-full transition-all duration-500"
+                style={{
+                  width: `${scrapeProgress.channels_total > 0
+                    ? (scrapeProgress.channels_done / scrapeProgress.channels_total) * 100
+                    : 0}%`,
+                }}
+              />
+            </div>
+            <div className="flex items-center gap-4 text-xs text-zinc-400">
+              <span>Current: {scrapeProgress.current_channel || '...'}</span>
+              <span>{scrapeProgress.total_new} new messages</span>
+              <span>{scrapeProgress.total_scraped} total scraped</span>
+            </div>
+            {scrapeProgress.auto_analysis?.status === 'in_progress' && (
+              <div className="flex items-center gap-2 text-xs text-purple-400">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                <span>
+                  Auto-analyzing: {scrapeProgress.auto_analysis.analyzed}/
+                  {scrapeProgress.auto_analysis.total_queued} messages
+                </span>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
 
       {/* Filters */}
       <Card>
