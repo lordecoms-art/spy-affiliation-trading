@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import shutil
 from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -8,6 +10,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.config import settings
 from app.database import SessionLocal
 from app.models.channel import Channel
+from app.models.message import Message
 from app.models.stats import ChannelStats
 
 logger = logging.getLogger(__name__)
@@ -37,30 +40,128 @@ def scrape_approved_channels() -> None:
             f"[Scheduler] Found {len(approved_channels)} approved channels."
         )
 
-        for channel in approved_channels:
-            try:
-                logger.info(
-                    f"[Scheduler] Scraping channel: {channel.title} "
-                    f"(ID: {channel.telegram_id})"
-                )
-                # The actual async scraping logic would be triggered here.
-                # In a production setup, this would use asyncio.run() or
-                # an async scheduler to call telegram_scraper methods.
-                # For now, we log the intent.
-                logger.info(
-                    f"[Scheduler] Channel {channel.title} queued for scraping."
-                )
-            except Exception as e:
-                logger.error(
-                    f"[Scheduler] Error scraping channel {channel.title}: {e}"
-                )
+        channel_ids = [ch.id for ch in approved_channels]
 
     except Exception as e:
         logger.error(f"[Scheduler] Error in scrape_approved_channels: {e}")
+        return
     finally:
         db.close()
 
+    # Run async scraping in a fresh event loop
+    from app.services.telegram_client import TelegramScraper
+
+    src_session = f"{settings.TELEGRAM_SESSION_NAME}.session"
+    bg_name = f"{settings.TELEGRAM_SESSION_NAME}_sched"
+    bg_session = f"{bg_name}.session"
+    try:
+        shutil.copy2(src_session, bg_session)
+    except Exception as e:
+        logger.error(f"[Scheduler] Failed to copy session file: {e}")
+        return
+
+    scraper = TelegramScraper(session_name=bg_name)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(
+            _scrape_channels_scheduled(scraper, channel_ids)
+        )
+    except Exception as e:
+        logger.error(f"[Scheduler] Scrape failed: {e}")
+    finally:
+        loop.run_until_complete(scraper.disconnect())
+        loop.close()
+
     logger.info("[Scheduler] Scrape cycle completed.")
+
+
+async def _scrape_channels_scheduled(scraper, channel_ids: list) -> None:
+    """Async scraping for scheduler."""
+    connected = await scraper.connect()
+    if not connected:
+        logger.error("[Scheduler] Cannot connect to Telegram.")
+        return
+
+    try:
+        await scraper.client.get_dialogs(limit=200)
+    except Exception:
+        pass
+
+    db = SessionLocal()
+    total_new = 0
+    try:
+        for ch_id in channel_ids:
+            channel = db.query(Channel).filter(Channel.id == ch_id).first()
+            if not channel:
+                continue
+
+            identifier = channel.username or str(channel.telegram_id)
+            last_msg = (
+                db.query(Message)
+                .filter(Message.channel_id == ch_id)
+                .order_by(Message.telegram_message_id.desc())
+                .first()
+            )
+            min_id = last_msg.telegram_message_id if last_msg else 0
+
+            try:
+                raw = await scraper.get_channel_messages(
+                    channel_identifier=identifier,
+                    limit=settings.MAX_MESSAGES_PER_SCRAPE,
+                    min_id=min_id,
+                )
+                new_count = 0
+                for msg_data in raw:
+                    existing = (
+                        db.query(Message)
+                        .filter(
+                            Message.channel_id == ch_id,
+                            Message.telegram_message_id == msg_data["telegram_message_id"],
+                        )
+                        .first()
+                    )
+                    if existing:
+                        existing.views_count = msg_data.get("views_count", existing.views_count)
+                        existing.forwards_count = msg_data.get("forwards_count", existing.forwards_count)
+                        existing.replies_count = msg_data.get("replies_count", existing.replies_count)
+                        existing.reactions_count = msg_data.get("reactions_count", existing.reactions_count)
+                    else:
+                        message = Message(
+                            channel_id=ch_id,
+                            telegram_message_id=msg_data["telegram_message_id"],
+                            content_type=msg_data.get("content_type", "text"),
+                            text_content=msg_data.get("text_content"),
+                            media_url=msg_data.get("media_url"),
+                            voice_duration=msg_data.get("voice_duration"),
+                            views_count=msg_data.get("views_count", 0),
+                            forwards_count=msg_data.get("forwards_count", 0),
+                            replies_count=msg_data.get("replies_count", 0),
+                            reactions_count=msg_data.get("reactions_count", 0),
+                            external_links=msg_data.get("external_links"),
+                            has_cta=msg_data.get("has_cta", False),
+                            cta_text=msg_data.get("cta_text"),
+                            cta_link=msg_data.get("cta_link"),
+                            posted_at=msg_data.get("posted_at"),
+                            scraped_at=datetime.utcnow(),
+                        )
+                        db.add(message)
+                        new_count += 1
+
+                db.commit()
+                total_new += new_count
+                logger.info(
+                    f"[Scheduler] Scraped {channel.title}: "
+                    f"{new_count} new / {len(raw)} total"
+                )
+            except Exception as e:
+                logger.error(f"[Scheduler] Error scraping {channel.title}: {e}")
+
+            await asyncio.sleep(2)
+    finally:
+        db.close()
+
+    logger.info(f"[Scheduler] Total new messages: {total_new}")
 
 
 def record_channel_stats() -> None:
@@ -87,16 +188,38 @@ def record_channel_stats() -> None:
 
         for channel in approved_channels:
             try:
-                # In production, fetch live stats from Telegram.
-                # For now, create a snapshot with placeholder values
-                # that would be filled by the Telegram API.
+                photos_count = (
+                    db.query(Message)
+                    .filter(Message.channel_id == channel.id, Message.content_type == "photo")
+                    .count()
+                )
+                videos_count = (
+                    db.query(Message)
+                    .filter(Message.channel_id == channel.id, Message.content_type == "video")
+                    .count()
+                )
+                files_count = (
+                    db.query(Message)
+                    .filter(Message.channel_id == channel.id, Message.content_type == "document")
+                    .count()
+                )
+                links_count = (
+                    db.query(Message)
+                    .filter(
+                        Message.channel_id == channel.id,
+                        Message.external_links.isnot(None),
+                        Message.external_links != "",
+                    )
+                    .count()
+                )
+
                 stats = ChannelStats(
                     channel_id=channel.id,
-                    subscribers_count=0,
-                    photos_count=0,
-                    videos_count=0,
-                    files_count=0,
-                    links_count=0,
+                    subscribers_count=channel.subscribers_count or 0,
+                    photos_count=photos_count,
+                    videos_count=videos_count,
+                    files_count=files_count,
+                    links_count=links_count,
                     recorded_at=datetime.utcnow(),
                 )
                 db.add(stats)

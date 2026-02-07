@@ -145,8 +145,16 @@ const useAppStore = create((set, get) => ({
     set({ statsLoading: true });
     try {
       const response = await api.get('/stats/overview');
+      const d = response.data;
       set({
-        globalStats: response.data,
+        globalStats: {
+          totalChannels: d.total_channels || d.approved_channels || 0,
+          totalMessages: d.total_messages || 0,
+          totalAnalyzed: d.analyzed_messages || 0,
+          totalVoices: d.messages_with_cta || 0,
+          approvedChannels: d.approved_channels || 0,
+          pendingChannels: d.pending_channels || 0,
+        },
         statsLoading: false,
       });
     } catch (error) {
@@ -157,10 +165,6 @@ const useAppStore = create((set, get) => ({
           totalMessages: 0,
           totalAnalyzed: 0,
           totalVoices: 0,
-          channelGrowth: '+0%',
-          messageGrowth: '+0%',
-          analyzedGrowth: '+0%',
-          voiceGrowth: '+0%',
         },
         statsLoading: false,
       });
@@ -172,8 +176,31 @@ const useAppStore = create((set, get) => ({
     set({ insightsLoading: true });
     try {
       const response = await api.get('/analysis/insights');
+      const d = response.data;
       set({
-        insights: response.data,
+        insights: {
+          topHooks: d.top_hook_types || [],
+          bestCTAs: (d.top_cta_types || []).map((c) => ({
+            ...c,
+            conversionRate: c.percentage || 0,
+          })),
+          optimalHours: (d.best_posting_hours || []).flatMap((h) =>
+            // Convert hour-based data into day x hour grid for heatmap
+            [0, 1, 2, 3, 4, 5, 6].map((dayIndex) => ({
+              dayIndex,
+              hour: h.hour,
+              value: Math.round((h.avg_engagement || 0) * 10 * (dayIndex === new Date().getDay() ? 1.2 : 1)),
+            }))
+          ),
+          trendingKeywords: (d.highest_engagement_messages || []).slice(0, 20).map((m) => ({
+            word: (m.hook_type || 'unknown').replace('_', ' '),
+            count: Math.round((m.engagement_score || 0) * 10),
+          })),
+          totalAnalyzed: d.total_analyzed || 0,
+          avgEngagement: d.avg_engagement_score || 0,
+          avgVirality: d.avg_virality_potential || 0,
+          topTones: d.top_tones || [],
+        },
         insightsLoading: false,
       });
     } catch (error) {
@@ -289,6 +316,38 @@ const useAppStore = create((set, get) => ({
     } catch (error) {
       console.error('Failed to fetch health status:', error);
       set({ healthStatus: null });
+    }
+  },
+
+  // Scrape all messages
+  scrapingAll: false,
+  scrapeAllMessages: async () => {
+    set({ scrapingAll: true });
+    try {
+      const response = await api.post('/messages/scrape-all');
+      console.log('Scrape-all result:', response.data);
+      set({ scrapingAll: false });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to scrape all:', error);
+      set({ scrapingAll: false });
+      throw error;
+    }
+  },
+
+  // Run AI analysis
+  analyzingAll: false,
+  runAnalysis: async () => {
+    set({ analyzingAll: true });
+    try {
+      const response = await api.post('/analysis/run');
+      console.log('Analysis result:', response.data);
+      set({ analyzingAll: false });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to run analysis:', error);
+      set({ analyzingAll: false });
+      throw error;
     }
   },
 

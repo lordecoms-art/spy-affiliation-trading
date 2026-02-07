@@ -130,7 +130,7 @@ class MessageAnalyzer:
             )
 
             response = self.client.messages.create(
-                model="claude-3-haiku-20240307",
+                model="claude-sonnet-4-20250514",
                 max_tokens=1024,
                 messages=[
                     {"role": "user", "content": prompt},
@@ -207,7 +207,7 @@ class MessageAnalyzer:
             )
 
             response = self.client.messages.create(
-                model="claude-3-haiku-20240307",
+                model="claude-sonnet-4-20250514",
                 max_tokens=1024,
                 messages=[
                     {"role": "user", "content": prompt},

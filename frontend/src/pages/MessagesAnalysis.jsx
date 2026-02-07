@@ -6,6 +6,9 @@ import {
   Eye,
   Forward,
   MessageSquare,
+  Download,
+  Brain,
+  Loader2,
 } from 'lucide-react';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
@@ -16,8 +19,12 @@ export default function MessagesAnalysis() {
     analysisData,
     channels,
     analysisLoading,
+    scrapingAll,
+    analyzingAll,
     fetchAnalysis,
     fetchChannels,
+    scrapeAllMessages,
+    runAnalysis,
   } = useAppStore();
 
   const [filters, setFilters] = useState({
@@ -41,7 +48,13 @@ export default function MessagesAnalysis() {
   const applyFilters = () => {
     const activeFilters = {};
     Object.entries(filters).forEach(([key, value]) => {
-      if (value) activeFilters[key] = value;
+      if (value) {
+        if (key === 'min_score') {
+          activeFilters['min_engagement'] = value;
+        } else {
+          activeFilters[key] = value;
+        }
+      }
     });
     fetchAnalysis(activeFilters);
   };
@@ -53,21 +66,80 @@ export default function MessagesAnalysis() {
     )
       return false;
     if (filters.hook_type && msg.hook_type !== filters.hook_type) return false;
-    if (filters.min_score && (msg.score || 0) < Number(filters.min_score))
+    if (filters.min_score && (msg.engagement_score || 0) < Number(filters.min_score))
       return false;
     return true;
   });
 
   const hookTypes = [
+    'question',
+    'bold_claim',
+    'statistic',
+    'story',
     'urgency',
+    'fear',
+    'curiosity',
     'social_proof',
     'authority',
-    'scarcity',
-    'reciprocity',
+    'pain_point',
   ];
+
+  const handleScrape = async () => {
+    try {
+      await scrapeAllMessages();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAnalyze = async () => {
+    try {
+      await runAnalysis();
+      fetchAnalysis();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const parseSafeJson = (str) => {
+    if (!str) return [];
+    try {
+      return JSON.parse(str);
+    } catch {
+      return [];
+    }
+  };
 
   return (
     <div className="space-y-6">
+      {/* Action Buttons */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleScrape}
+          disabled={scrapingAll}
+          className="flex items-center gap-2 px-4 py-2.5 bg-cyan-500 hover:bg-cyan-600 disabled:bg-cyan-500/50 text-white rounded-lg text-sm font-medium transition-colors"
+        >
+          {scrapingAll ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Download className="w-4 h-4" />
+          )}
+          <span>{scrapingAll ? 'Scraping...' : 'Scrape Messages'}</span>
+        </button>
+        <button
+          onClick={handleAnalyze}
+          disabled={analyzingAll}
+          className="flex items-center gap-2 px-4 py-2.5 bg-purple-500 hover:bg-purple-600 disabled:bg-purple-500/50 text-white rounded-lg text-sm font-medium transition-colors"
+        >
+          {analyzingAll ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Brain className="w-4 h-4" />
+          )}
+          <span>{analyzingAll ? 'Analyzing...' : 'Run AI Analysis'}</span>
+        </button>
+      </div>
+
       {/* Filters */}
       <Card>
         <div className="flex items-center gap-2 mb-4">
@@ -108,7 +180,7 @@ export default function MessagesAnalysis() {
               <option value="">All Types</option>
               {hookTypes.map((type) => (
                 <option key={type} value={type}>
-                  {type.replace('_', ' ')}
+                  {type.replace(/_/g, ' ')}
                 </option>
               ))}
             </select>
@@ -189,7 +261,7 @@ export default function MessagesAnalysis() {
               No analyzed messages found
             </p>
             <p className="text-sm">
-              Adjust your filters or wait for new messages to be analyzed.
+              Click "Scrape Messages" then "Run AI Analysis" to get started.
             </p>
           </div>
         </Card>
@@ -231,43 +303,45 @@ export default function MessagesAnalysis() {
                     }
                   >
                     <td className="px-4 py-3 text-sm text-zinc-300 whitespace-nowrap">
-                      {msg.channel_name}
+                      {msg.channel_title || `Ch #${msg.channel_id}`}
                     </td>
                     <td className="px-4 py-3 text-sm text-zinc-300 max-w-xs">
-                      <p className="line-clamp-1">{msg.text}</p>
+                      <p className="line-clamp-1">{msg.message_text}</p>
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={msg.hook_type}>
-                        {(msg.hook_type || '').replace('_', ' ')}
+                        {(msg.hook_type || '').replace(/_/g, ' ')}
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={msg.cta_type}>
-                        {(msg.cta_type || '').replace('_', ' ')}
+                        {(msg.cta_type || '').replace(/_/g, ' ')}
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
                       <span
                         className={`text-sm font-bold ${
-                          (msg.score || 0) >= 8
+                          (msg.engagement_score || 0) >= 8
                             ? 'text-emerald-500'
-                            : (msg.score || 0) >= 6
+                            : (msg.engagement_score || 0) >= 6
                             ? 'text-yellow-500'
                             : 'text-zinc-400'
                         }`}
                       >
-                        {msg.score || '-'}
+                        {msg.engagement_score
+                          ? msg.engagement_score.toFixed(1)
+                          : '-'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-zinc-400">
                       <div className="flex items-center gap-3">
                         <span className="flex items-center gap-1">
                           <Eye className="w-3.5 h-3.5" />
-                          {(msg.views || 0).toLocaleString()}
+                          {(msg.views_count || 0).toLocaleString()}
                         </span>
                         <span className="flex items-center gap-1">
                           <Forward className="w-3.5 h-3.5" />
-                          {(msg.forwards || 0).toLocaleString()}
+                          {(msg.forwards_count || 0).toLocaleString()}
                         </span>
                       </div>
                     </td>
@@ -291,58 +365,58 @@ export default function MessagesAnalysis() {
                             <h4 className="text-xs font-medium text-zinc-500 uppercase mb-2">
                               Full Message
                             </h4>
-                            <p className="text-sm text-zinc-300 bg-zinc-800 rounded-lg p-3">
-                              {msg.text}
+                            <p className="text-sm text-zinc-300 bg-zinc-800 rounded-lg p-3 whitespace-pre-wrap">
+                              {msg.message_text}
                             </p>
                           </div>
 
                           {/* Analysis breakdown */}
-                          {msg.analysis && (
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                              <div>
-                                <h4 className="text-xs font-medium text-zinc-500 uppercase mb-2">
-                                  Hook Analysis
-                                </h4>
-                                <p className="text-sm text-zinc-400">
-                                  {msg.analysis.hook}
-                                </p>
-                              </div>
-                              <div>
-                                <h4 className="text-xs font-medium text-zinc-500 uppercase mb-2">
-                                  CTA Analysis
-                                </h4>
-                                <p className="text-sm text-zinc-400">
-                                  {msg.analysis.cta}
-                                </p>
-                              </div>
-                              <div>
-                                <h4 className="text-xs font-medium text-zinc-500 uppercase mb-2">
-                                  Persuasion Techniques
-                                </h4>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {(
-                                    msg.analysis.persuasion_techniques || []
-                                  ).map((tech) => (
-                                    <Badge key={tech} variant="info">
-                                      {tech}
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                              <h4 className="text-xs font-medium text-zinc-500 uppercase mb-2">
+                                Tone
+                              </h4>
+                              <Badge variant={msg.tone}>
+                                {(msg.tone || 'unknown').replace(/_/g, ' ')}
+                              </Badge>
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-medium text-zinc-500 uppercase mb-2">
+                                Virality Potential
+                              </h4>
+                              <span className="text-sm font-bold text-purple-400">
+                                {msg.virality_potential
+                                  ? msg.virality_potential.toFixed(1)
+                                  : '-'}
+                                /10
+                              </span>
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-medium text-zinc-500 uppercase mb-2">
+                                Promises / Social Proof
+                              </h4>
+                              <div className="flex flex-wrap gap-1.5">
+                                {parseSafeJson(msg.promises).map((p, i) => (
+                                  <Badge key={i} variant="info">
+                                    {p}
+                                  </Badge>
+                                ))}
+                                {parseSafeJson(msg.social_proof_elements).map(
+                                  (s, i) => (
+                                    <Badge key={`sp-${i}`} variant="pending">
+                                      {s}
                                     </Badge>
-                                  ))}
-                                </div>
-                                {msg.analysis.estimated_conversion && (
-                                  <p className="text-sm text-emerald-500 mt-2">
-                                    Est. conversion:{' '}
-                                    {msg.analysis.estimated_conversion}
-                                  </p>
+                                  )
                                 )}
                               </div>
                             </div>
-                          )}
+                          </div>
 
                           {/* Date */}
                           <p className="text-xs text-zinc-500">
-                            Posted:{' '}
-                            {msg.date
-                              ? new Date(msg.date).toLocaleString()
+                            Analyzed:{' '}
+                            {msg.analyzed_at
+                              ? new Date(msg.analyzed_at).toLocaleString()
                               : 'Unknown'}
                           </p>
                         </div>

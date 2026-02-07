@@ -4,12 +4,13 @@ from collections import Counter
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
+from app.models.channel import Channel
 from app.models.message import Message
 from app.models.analysis import MessageAnalysis
 from app.services.analyzer import message_analyzer
@@ -53,6 +54,9 @@ class AnalysisWithMessageResponse(BaseModel):
     message_text: Optional[str]
     message_content_type: Optional[str]
     channel_id: Optional[int]
+    channel_title: Optional[str] = None
+    views_count: int = 0
+    forwards_count: int = 0
 
     class Config:
         from_attributes = True
@@ -63,6 +67,11 @@ class AnalyzeResultResponse(BaseModel):
     success: bool
     analysis: Optional[AnalysisResponse]
     error: Optional[str]
+
+
+class RunAnalysisResponse(BaseModel):
+    status: str
+    messages_queued: int
 
 
 class InsightsResponse(BaseModel):
@@ -107,8 +116,12 @@ def list_analyses(
             Message.text_content.label("message_text"),
             Message.content_type.label("message_content_type"),
             Message.channel_id.label("channel_id"),
+            Channel.title.label("channel_title"),
+            Message.views_count.label("views_count"),
+            Message.forwards_count.label("forwards_count"),
         )
         .join(Message, Message.id == MessageAnalysis.message_id)
+        .join(Channel, Channel.id == Message.channel_id)
     )
 
     if hook_type is not None:
@@ -153,6 +166,9 @@ def list_analyses(
                 "message_text": row.message_text,
                 "message_content_type": row.message_content_type,
                 "channel_id": row.channel_id,
+                "channel_title": row.channel_title,
+                "views_count": row.views_count or 0,
+                "forwards_count": row.forwards_count or 0,
             }
         )
 
@@ -414,3 +430,120 @@ def get_insights(
         "best_posting_hours": best_hours,
         "highest_engagement_messages": highest_engagement,
     }
+
+
+@router.post("/run", response_model=RunAnalysisResponse)
+def run_analysis_all(
+    background_tasks: BackgroundTasks,
+    limit: int = Query(50, ge=1, le=500, description="Max messages to analyze"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Analyze all unanalyzed messages with text content in background."""
+    from sqlalchemy import not_, exists
+
+    # Find messages that have text and haven't been analyzed yet
+    unanalyzed = (
+        db.query(Message.id)
+        .filter(
+            Message.text_content.isnot(None),
+            Message.text_content != "",
+            ~exists().where(MessageAnalysis.message_id == Message.id),
+        )
+        .order_by(Message.posted_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    message_ids = [row.id for row in unanalyzed]
+
+    if not message_ids:
+        return {"status": "no_pending", "messages_queued": 0}
+
+    background_tasks.add_task(_analyze_all_bg, message_ids)
+    return {"status": "started", "messages_queued": len(message_ids)}
+
+
+def _analyze_all_bg(message_ids: list) -> None:
+    """Background task: analyze messages one by one."""
+    import time
+
+    db = SessionLocal()
+    analyzed = 0
+    errors = 0
+
+    try:
+        for msg_id in message_ids:
+            message = db.query(Message).filter(Message.id == msg_id).first()
+            if not message:
+                continue
+
+            # Skip if already analyzed (race condition guard)
+            existing = (
+                db.query(MessageAnalysis)
+                .filter(MessageAnalysis.message_id == msg_id)
+                .first()
+            )
+            if existing:
+                continue
+
+            text = message.text_content
+            if message.content_type == "voice" and message.voice_transcription:
+                text = message.voice_transcription
+
+            if not text or not text.strip():
+                continue
+
+            try:
+                if message.content_type == "voice" and message.voice_transcription:
+                    result = message_analyzer.analyze_voice_transcript(
+                        transcript=text,
+                        duration=message.voice_duration or 0,
+                    )
+                else:
+                    result = message_analyzer.analyze_message(
+                        text_content=text,
+                        content_type=message.content_type or "text",
+                        views_count=message.views_count,
+                        forwards_count=message.forwards_count,
+                        reactions_count=message.reactions_count,
+                        has_cta=message.has_cta,
+                        cta_text=message.cta_text,
+                        external_links=message.external_links,
+                    )
+
+                if result:
+                    analysis = MessageAnalysis(
+                        message_id=msg_id,
+                        hook_type=result.get("hook_type"),
+                        cta_type=result.get("cta_type"),
+                        tone=result.get("tone"),
+                        promises=result.get("promises"),
+                        social_proof_elements=result.get("social_proof_elements"),
+                        engagement_score=result.get("engagement_score"),
+                        virality_potential=result.get("virality_potential"),
+                        raw_analysis=result.get("raw_analysis"),
+                        analyzed_at=result.get("analyzed_at", datetime.utcnow()),
+                    )
+                    db.add(analysis)
+                    db.commit()
+                    analyzed += 1
+                    logger.info(f"Analyzed message {msg_id} ({analyzed}/{len(message_ids)})")
+                else:
+                    errors += 1
+
+            except Exception as e:
+                logger.error(f"Error analyzing message {msg_id}: {e}")
+                errors += 1
+
+            # Rate limit: wait between API calls
+            time.sleep(1)
+
+    except Exception as e:
+        logger.error(f"Background analysis failed: {e}")
+    finally:
+        db.close()
+
+    logger.info(
+        f"Background analysis complete: {analyzed} analyzed, {errors} errors "
+        f"out of {len(message_ids)} queued."
+    )

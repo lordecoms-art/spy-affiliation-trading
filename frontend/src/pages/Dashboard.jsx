@@ -4,7 +4,7 @@ import {
   Radio,
   MessageSquare,
   Brain,
-  Mic,
+  MousePointerClick,
   TrendingUp,
   Eye,
   ArrowUpRight,
@@ -44,29 +44,28 @@ export default function Dashboard() {
     globalStats,
     channels,
     pendingChannels,
-    messages,
+    analysisData,
     fetchStats,
     fetchChannels,
-    fetchMessages,
+    fetchAnalysis,
   } = useAppStore();
 
   useEffect(() => {
     fetchStats();
     fetchChannels();
-    fetchMessages();
-  }, [fetchStats, fetchChannels, fetchMessages]);
+    fetchAnalysis();
+  }, [fetchStats, fetchChannels, fetchAnalysis]);
 
   const topChannels = [...channels]
-    .sort((a, b) => (b.growth_7d || 0) - (a.growth_7d || 0))
+    .sort((a, b) => (b.subscribers_count || 0) - (a.subscribers_count || 0))
     .slice(0, 5)
     .map((ch) => ({
       name: ch.title?.length > 18 ? ch.title.substring(0, 18) + '...' : ch.title,
-      growth: ch.growth_7d || 0,
       subscribers: ch.subscribers_count || 0,
     }));
 
-  const topMessages = [...messages]
-    .sort((a, b) => (b.score || 0) - (a.score || 0))
+  const topMessages = [...analysisData]
+    .sort((a, b) => (b.engagement_score || 0) - (a.engagement_score || 0))
     .slice(0, 5);
 
   const formatTimeAgo = (dateStr) => {
@@ -103,39 +102,35 @@ export default function Dashboard() {
           icon={Radio}
           label="Channels Tracked"
           value={globalStats.totalChannels}
-          change={globalStats.channelGrowth}
           iconColor="text-emerald-500"
         />
         <StatCard
           icon={MessageSquare}
           label="Messages Collected"
           value={globalStats.totalMessages}
-          change={globalStats.messageGrowth}
           iconColor="text-cyan-500"
         />
         <StatCard
           icon={Brain}
           label="Messages Analyzed"
           value={globalStats.totalAnalyzed}
-          change={globalStats.analyzedGrowth}
           iconColor="text-purple-500"
         />
         <StatCard
-          icon={Mic}
-          label="Voices Transcribed"
+          icon={MousePointerClick}
+          label="Messages with CTA"
           value={globalStats.totalVoices}
-          change={globalStats.voiceGrowth}
           iconColor="text-amber-500"
         />
       </div>
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top Channels by Growth */}
+        {/* Top Channels by Subscribers */}
         <Card>
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-zinc-100">
-              Top Channels by Growth
+              Top Channels by Subscribers
             </h3>
             <TrendingUp className="w-5 h-5 text-emerald-500" />
           </div>
@@ -152,7 +147,13 @@ export default function Dashboard() {
                   tick={{ fill: '#71717a', fontSize: 12 }}
                   axisLine={{ stroke: '#27272a' }}
                   tickLine={false}
-                  unit="%"
+                  tickFormatter={(v) =>
+                    v >= 1000000
+                      ? `${(v / 1000000).toFixed(1)}M`
+                      : v >= 1000
+                      ? `${(v / 1000).toFixed(0)}K`
+                      : v
+                  }
                 />
                 <YAxis
                   type="category"
@@ -164,7 +165,7 @@ export default function Dashboard() {
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Bar
-                  dataKey="growth"
+                  dataKey="subscribers"
                   fill="#10b981"
                   radius={[0, 4, 4, 0]}
                   barSize={24}
@@ -201,21 +202,21 @@ export default function Dashboard() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-zinc-300 line-clamp-2">
-                      {msg.text}
+                      {msg.message_text}
                     </p>
                     <div className="flex items-center gap-2 mt-1.5">
                       <Badge variant={msg.hook_type}>{msg.hook_type}</Badge>
                       <span className="text-xs text-zinc-500">
-                        {msg.channel_name}
+                        {msg.channel_title}
                       </span>
                     </div>
                   </div>
                   <div className="flex-shrink-0 text-right">
                     <p className="text-lg font-bold text-emerald-500">
-                      {msg.score}
+                      {(msg.engagement_score || 0).toFixed(1)}
                     </p>
                     <p className="text-xs text-zinc-500">
-                      {(msg.views || 0).toLocaleString()} views
+                      {(msg.views_count || 0).toLocaleString()} views
                     </p>
                   </div>
                 </div>
