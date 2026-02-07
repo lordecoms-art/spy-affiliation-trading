@@ -435,7 +435,7 @@ def get_insights(
 @router.post("/run", response_model=RunAnalysisResponse)
 def run_analysis_all(
     background_tasks: BackgroundTasks,
-    limit: int = Query(50, ge=1, le=500, description="Max messages to analyze"),
+    limit: int = Query(5000, ge=1, le=10000, description="Max messages to analyze"),
     db: Session = Depends(get_db),
 ) -> dict:
     """Analyze all unanalyzed messages with text content in background."""

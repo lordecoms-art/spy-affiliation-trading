@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import engine, Base
-from app.routers import channels, messages, stats, analysis
+from app.routers import channels, messages, stats, analysis, persona
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 # Configure logging
@@ -118,6 +118,7 @@ app.include_router(channels.router)
 app.include_router(messages.router)
 app.include_router(stats.router)
 app.include_router(analysis.router)
+app.include_router(persona.router)
 
 
 @app.get("/", tags=["root"])

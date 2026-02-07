@@ -7,6 +7,7 @@ import {
   MessageSquare,
   BarChart3,
   Loader2,
+  UserCircle,
 } from 'lucide-react';
 import {
   LineChart,
@@ -109,9 +110,18 @@ export default function ChannelDetail() {
               </p>
             </div>
           </div>
-          <Badge variant={channel.status || 'approved'}>
-            {channel.status || 'approved'}
-          </Badge>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate(`/channels/${id}/persona`)}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              <UserCircle className="w-4 h-4" />
+              View Persona
+            </button>
+            <Badge variant={channel.status || 'approved'}>
+              {channel.status || 'approved'}
+            </Badge>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-6 pt-6 border-t border-zinc-800">
