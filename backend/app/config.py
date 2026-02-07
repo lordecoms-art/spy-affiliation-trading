@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     TELEGRAM_API_ID: int = 32794038
     TELEGRAM_API_HASH: str = "a6e36c2271ead721fcbb6e6a1b2ead09"
     TELEGRAM_SESSION_NAME: str = "spy_session"
+    TELEGRAM_SESSION_DATA: str = ""
     ANTHROPIC_API_KEY: str = ""
     SCRAPE_INTERVAL_MINUTES: int = 30
     MAX_MESSAGES_PER_SCRAPE: int = 100

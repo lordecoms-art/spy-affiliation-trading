@@ -1,4 +1,6 @@
+import base64
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -23,6 +25,22 @@ async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown events."""
     # Startup
     logger.info("Starting Spy Affiliation Trading backend...")
+
+    # Restore Telegram session file from env var if available
+    session_data = os.environ.get("TELEGRAM_SESSION_DATA")
+    if session_data:
+        import gzip
+        session_path = f"{settings.TELEGRAM_SESSION_NAME}.session"
+        try:
+            raw = base64.b64decode(session_data)
+            decompressed = gzip.decompress(raw)
+            with open(session_path, "wb") as f:
+                f.write(decompressed)
+            logger.info(f"Telegram session file restored ({len(decompressed)} bytes) to {session_path}")
+        except Exception as e:
+            logger.error(f"Failed to restore Telegram session: {e}")
+    else:
+        logger.info("No TELEGRAM_SESSION_DATA env var found, using local session file if available.")
 
     # Create database tables
     try:
