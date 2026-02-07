@@ -92,8 +92,12 @@ def get_overview(
     analyzed_messages = db.query(func.count(MessageAnalysis.id)).scalar() or 0
     total_stats_snapshots = db.query(func.count(ChannelStats.id)).scalar() or 0
     messages_with_cta = (
-        db.query(func.count(Message.id))
-        .filter(Message.has_cta == True)
+        db.query(func.count(MessageAnalysis.id))
+        .filter(
+            MessageAnalysis.cta_type.isnot(None),
+            MessageAnalysis.cta_type != "none",
+            MessageAnalysis.cta_type != "",
+        )
         .scalar()
         or 0
     )
