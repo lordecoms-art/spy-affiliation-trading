@@ -83,16 +83,31 @@ export default function ChannelDetail() {
       {/* Channel Header */}
       <Card>
         <div className="flex items-start justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-zinc-100">
-              {channel.title}
-            </h2>
-            <p className="text-emerald-500 text-sm mt-1">
-              {channel.username}
-            </p>
-            <p className="text-zinc-400 text-sm mt-3 max-w-2xl">
-              {channel.description || 'No description available'}
-            </p>
+          <div className="flex items-start gap-4">
+            {channel.photo_url ? (
+              <img
+                src={channel.photo_url}
+                alt={channel.title}
+                className="w-14 h-14 rounded-xl object-cover flex-shrink-0"
+              />
+            ) : (
+              <div className="w-14 h-14 rounded-xl bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                <span className="text-emerald-500 font-bold text-xl">
+                  {(channel.title || '?')[0].toUpperCase()}
+                </span>
+              </div>
+            )}
+            <div>
+              <h2 className="text-2xl font-bold text-zinc-100">
+                {channel.title}
+              </h2>
+              <p className="text-emerald-500 text-sm mt-1">
+                {channel.username ? `@${channel.username}` : ''}
+              </p>
+              <p className="text-zinc-400 text-sm mt-3 max-w-2xl">
+                {channel.description || 'No description available'}
+              </p>
+            </div>
           </div>
           <Badge variant={channel.status || 'approved'}>
             {channel.status || 'approved'}
@@ -106,7 +121,7 @@ export default function ChannelDetail() {
             </div>
             <div>
               <p className="text-xl font-bold text-zinc-100">
-                {(channel.subscribers || 0).toLocaleString()}
+                {(channel.subscribers_count || 0).toLocaleString()}
               </p>
               <p className="text-xs text-zinc-500">Subscribers</p>
             </div>

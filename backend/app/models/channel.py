@@ -22,6 +22,7 @@ class Channel(Base):
     title = Column(String(500), nullable=False)
     description = Column(Text, nullable=True)
     photo_url = Column(Text, nullable=True)
+    subscribers_count = Column(Integer, default=0, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     status = Column(String(50), default="pending", nullable=False, index=True)
     discovered_at = Column(DateTime, default=datetime.utcnow, nullable=False)

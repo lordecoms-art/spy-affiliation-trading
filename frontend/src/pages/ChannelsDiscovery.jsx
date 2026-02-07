@@ -91,16 +91,31 @@ export default function ChannelsDiscovery() {
             <Card key={channel.id} className="flex flex-col">
               {/* Channel Info */}
               <div className="flex-1">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="text-base font-semibold text-zinc-100">
-                      {channel.title}
-                    </h3>
+                <div className="flex items-start gap-3 mb-3">
+                  {channel.photo_url ? (
+                    <img
+                      src={channel.photo_url}
+                      alt={channel.title}
+                      className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                      <span className="text-emerald-500 font-bold text-sm">
+                        {(channel.title || '?')[0].toUpperCase()}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between">
+                      <h3 className="text-base font-semibold text-zinc-100 truncate">
+                        {channel.title}
+                      </h3>
+                      <Badge variant="pending">Pending</Badge>
+                    </div>
                     <p className="text-sm text-emerald-500">
-                      {channel.username}
+                      {channel.username ? `@${channel.username}` : ''}
                     </p>
                   </div>
-                  <Badge variant="pending">Pending</Badge>
                 </div>
 
                 <p className="text-sm text-zinc-400 mb-4 line-clamp-2">
@@ -111,7 +126,7 @@ export default function ChannelsDiscovery() {
                   <div className="flex items-center gap-1.5">
                     <Users className="w-4 h-4" />
                     <span>
-                      {(channel.subscribers || 0).toLocaleString()}
+                      {(channel.subscribers_count || 0).toLocaleString()}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5">

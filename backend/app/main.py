@@ -49,6 +49,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}")
 
+    # Add subscribers_count column if missing (no Alembic in this project)
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE channels ADD COLUMN IF NOT EXISTS subscribers_count INTEGER DEFAULT 0 NOT NULL"
+            ))
+            conn.commit()
+            logger.info("Schema migration: subscribers_count column ensured.")
+    except Exception as e:
+        logger.warning(f"Schema migration note: {e}")
+
     # Start the scheduler
     try:
         start_scheduler()

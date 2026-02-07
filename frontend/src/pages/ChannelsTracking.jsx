@@ -30,12 +30,22 @@ export default function ChannelsTracking() {
       label: 'Channel',
       render: (value, row) => (
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-zinc-800 flex items-center justify-center flex-shrink-0">
-            <Radio className="w-4 h-4 text-emerald-500" />
-          </div>
+          {row.photo_url ? (
+            <img
+              src={row.photo_url}
+              alt={value}
+              className="w-9 h-9 rounded-lg object-cover flex-shrink-0"
+            />
+          ) : (
+            <div className="w-9 h-9 rounded-lg bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+              <span className="text-emerald-500 font-bold text-sm">
+                {(value || '?')[0].toUpperCase()}
+              </span>
+            </div>
+          )}
           <div>
             <p className="font-medium text-zinc-200">{value}</p>
-            <p className="text-xs text-zinc-500">{row.username}</p>
+            <p className="text-xs text-zinc-500">{row.username ? `@${row.username}` : ''}</p>
           </div>
         </div>
       ),
@@ -46,13 +56,14 @@ export default function ChannelsTracking() {
       render: (value) => <Badge variant="info">{value || 'N/A'}</Badge>,
     },
     {
-      key: 'subscribers',
+      key: 'subscribers_count',
       label: 'Subscribers',
-      render: (value) => (
-        <span className="font-medium text-zinc-200">
-          {(value || 0).toLocaleString()}
-        </span>
-      ),
+      render: (value) => {
+        const v = value || 0;
+        if (v >= 1000000) return <span className="font-medium text-zinc-200">{(v / 1000000).toFixed(1)}M</span>;
+        if (v >= 1000) return <span className="font-medium text-zinc-200">{(v / 1000).toFixed(1)}K</span>;
+        return <span className="font-medium text-zinc-200">{v.toLocaleString()}</span>;
+      },
     },
     {
       key: 'growth_7d',

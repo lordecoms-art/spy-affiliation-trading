@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 import random
 from datetime import datetime
@@ -95,16 +96,7 @@ class TelegramScraper:
 
             full_chat = full_channel.full_chat
 
-            photo_url = None
-            if entity.photo:
-                try:
-                    photo_url = await self.client.download_profile_photo(
-                        entity, file=bytes
-                    )
-                    if photo_url:
-                        photo_url = f"profile_{entity.id}.jpg"
-                except Exception:
-                    photo_url = None
+            photo_url = await self._download_photo_b64(entity)
 
             return {
                 "telegram_id": entity.id,
@@ -118,6 +110,56 @@ class TelegramScraper:
 
         except Exception as e:
             logger.error(f"Error fetching channel info for {channel_identifier}: {e}")
+            return None
+
+    async def _download_photo_b64(self, entity) -> Optional[str]:
+        """Download an entity's profile photo and return as base64 data URL."""
+        if not entity.photo:
+            return None
+        try:
+            photo_bytes = await self.client.download_profile_photo(entity, file=bytes)
+            if photo_bytes:
+                photo_b64 = base64.b64encode(photo_bytes).decode()
+                return f"data:image/jpeg;base64,{photo_b64}"
+        except Exception as e:
+            logger.warning(f"Failed to download photo for {getattr(entity, 'title', entity.id)}: {e}")
+        return None
+
+    async def enrich_channel(self, telegram_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Fetch full info (photo, subscribers, description) for a single channel by telegram_id.
+
+        Args:
+            telegram_id: The Telegram channel ID.
+
+        Returns:
+            Dictionary with enrichment data or None on failure.
+        """
+        try:
+            if not self._connected:
+                await self.connect()
+
+            entity = await self.client.get_entity(telegram_id)
+
+            if not isinstance(entity, Channel):
+                return None
+
+            full_channel = await self.client(GetFullChannelRequest(entity))
+            full_chat = full_channel.full_chat
+
+            photo_url = await self._download_photo_b64(entity)
+
+            return {
+                "telegram_id": entity.id,
+                "username": entity.username,
+                "title": entity.title,
+                "description": getattr(full_chat, "about", None),
+                "photo_url": photo_url,
+                "is_verified": getattr(entity, "verified", False),
+                "subscribers_count": getattr(full_chat, "participants_count", 0),
+            }
+        except Exception as e:
+            logger.error(f"Error enriching channel {telegram_id}: {e}")
             return None
 
     async def get_channel_messages(

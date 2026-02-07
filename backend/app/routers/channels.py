@@ -3,11 +3,11 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models.channel import Channel
 from app.models.discovery import ChannelDiscovery
 from app.services.telegram_client import telegram_scraper
@@ -46,6 +46,7 @@ class ChannelResponse(BaseModel):
     title: str
     description: Optional[str]
     photo_url: Optional[str]
+    subscribers_count: int = 0
     is_verified: bool
     status: str
     discovered_at: Optional[datetime]
@@ -284,9 +285,14 @@ def reject_channel(
 
 @router.post("/sync-telegram", response_model=SyncResult)
 def sync_telegram_channels(
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> dict:
-    """Sync channels from the authenticated Telegram account."""
+    """Sync channels from the authenticated Telegram account.
+
+    Does a fast sync of channel names/IDs, then enriches (photos, subscribers,
+    descriptions) in a background task to avoid timeouts.
+    """
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -314,6 +320,10 @@ def sync_telegram_channels(
         )
 
         if existing:
+            # Update title/username if changed
+            existing.title = ch.get("title", existing.title)
+            existing.username = ch.get("username", existing.username)
+            existing.is_verified = ch.get("is_verified", existing.is_verified)
             existing_count += 1
             continue
 
@@ -334,11 +344,66 @@ def sync_telegram_channels(
         f"out of {len(joined_channels)} total."
     )
 
+    # Enrich all channels (photos, subscribers, descriptions) in background
+    background_tasks.add_task(_enrich_all_channels)
+
     return {
         "synced": len(joined_channels),
         "new_channels": new_count,
         "existing_channels": existing_count,
     }
+
+
+def _enrich_all_channels() -> None:
+    """Background task: enrich every channel with photo, subscribers, description."""
+    db = SessionLocal()
+    try:
+        channels = db.query(Channel).filter(
+            Channel.status.in_(["pending", "approved"])
+        ).all()
+        logger.info(f"Background enrichment starting for {len(channels)} channels...")
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_enrich_channels_async(channels, db))
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.error(f"Background enrichment failed: {e}")
+    finally:
+        db.close()
+
+
+async def _enrich_channels_async(channels: list, db) -> None:
+    """Async helper: loop through channels and enrich one by one with delay."""
+    connected = await telegram_scraper.connect()
+    if not connected:
+        logger.error("Cannot enrich channels: Telegram not connected.")
+        return
+
+    enriched = 0
+    for ch in channels:
+        try:
+            data = await telegram_scraper.enrich_channel(ch.telegram_id)
+            if data:
+                ch.description = data.get("description") or ch.description
+                ch.photo_url = data.get("photo_url") or ch.photo_url
+                ch.subscribers_count = data.get("subscribers_count", 0)
+                ch.is_verified = data.get("is_verified", ch.is_verified)
+                ch.username = data.get("username") or ch.username
+                db.commit()
+                enriched += 1
+                logger.info(
+                    f"Enriched {ch.title}: {ch.subscribers_count} subscribers"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to enrich {ch.title}: {e}")
+
+        # Rate limit: 1 second between each API call
+        await asyncio.sleep(1)
+
+    logger.info(f"Background enrichment complete: {enriched}/{len(channels)} channels enriched.")
 
 
 @router.delete("/{channel_id}", response_model=MessageResponse)

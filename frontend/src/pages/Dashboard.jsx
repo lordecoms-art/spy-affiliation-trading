@@ -62,7 +62,7 @@ export default function Dashboard() {
     .map((ch) => ({
       name: ch.title?.length > 18 ? ch.title.substring(0, 18) + '...' : ch.title,
       growth: ch.growth_7d || 0,
-      subscribers: ch.subscribers || 0,
+      subscribers: ch.subscribers_count || 0,
     }));
 
   const topMessages = [...messages]
