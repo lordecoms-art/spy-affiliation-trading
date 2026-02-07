@@ -402,6 +402,13 @@ async def _enrich_channels_async(scraper, channels: list, db) -> None:
         logger.error("Cannot enrich channels: Telegram not connected.")
         return
 
+    # Load dialogs first to populate the entity cache (needed for PeerChannel resolution)
+    try:
+        await scraper.client.get_dialogs(limit=200)
+        logger.info("Background enrichment: entity cache populated from dialogs.")
+    except Exception as e:
+        logger.warning(f"Failed to pre-load dialogs for entity cache: {e}")
+
     enriched = 0
     for ch in channels:
         try:

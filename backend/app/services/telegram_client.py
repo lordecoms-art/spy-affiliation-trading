@@ -13,6 +13,7 @@ from telethon.tl.types import (
     InputPeerEmpty,
     MessageMediaDocument,
     MessageMediaPhoto,
+    PeerChannel,
 )
 
 from app.config import settings
@@ -140,7 +141,8 @@ class TelegramScraper:
             if not self._connected:
                 await self.connect()
 
-            entity = await self.client.get_entity(telegram_id)
+            # Use PeerChannel so Telethon resolves as channel, not user
+            entity = await self.client.get_entity(PeerChannel(channel_id=telegram_id))
 
             if not isinstance(entity, Channel):
                 return None
