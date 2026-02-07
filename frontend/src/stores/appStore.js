@@ -68,7 +68,7 @@ const useAppStore = create((set, get) => ({
   fetchChannels: async () => {
     set({ channelsLoading: true });
     try {
-      const response = await api.get('/channels/');
+      const response = await api.get('/channels/', { params: { limit: 200 } });
       const allChannels = response.data?.channels || response.data || [];
       set({
         channels: allChannels.filter((c) => c.status === 'approved'),
