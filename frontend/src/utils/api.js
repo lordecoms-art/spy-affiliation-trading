@@ -18,6 +18,10 @@ const api = axios.create({
 
 api.interceptors.request.use(
   (config) => {
+    // Add trailing slash to prevent 307 redirects from FastAPI
+    if (config.url && !config.url.endsWith('/') && !config.url.includes('?') && !config.url.includes('#')) {
+      config.url += '/';
+    }
     const token = localStorage.getItem('auth_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;

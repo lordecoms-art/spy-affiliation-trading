@@ -71,10 +71,26 @@ app = FastAPI(
         "and trading channels. Scrape messages, analyze content with AI, "
         "and track engagement metrics."
     ),
-    version="1.0.2",
-    redirect_slashes=False,
+    version="1.0.3",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def force_https_redirects(request, call_next):
+    """Force HTTPS in redirect locations.
+
+    Railway terminates SSL at the edge so FastAPI sees HTTP internally.
+    When redirect_slashes triggers a 307, the Location header uses http://
+    which causes mixed-content errors. This middleware rewrites it to https://.
+    """
+    response = await call_next(request)
+    if response.status_code == 307 and "location" in response.headers:
+        location = response.headers["location"]
+        if location.startswith("http://"):
+            response.headers["location"] = location.replace("http://", "https://", 1)
+    return response
+
 
 # CORS configuration
 app.add_middleware(
