@@ -280,9 +280,7 @@ class TelegramScraper:
             if not self._connected:
                 await self.connect()
 
-            entity = await self.rate_limited_request(
-                self.client.get_entity(channel_identifier)
-            )
+            entity = await self._resolve_entity(channel_identifier)
 
             messages = await self.rate_limited_request(
                 self.client.get_messages(entity, limit=limit, min_id=min_id)
@@ -304,11 +302,23 @@ class TelegramScraper:
             )
             return messages_data
 
+    async def _resolve_entity(self, channel_identifier: str):
+        """Resolve a channel entity from username or numeric ID string."""
+        # If it looks like a numeric ID, use PeerChannel for proper resolution
+        try:
+            numeric_id = int(channel_identifier)
+            return await self.client.get_entity(PeerChannel(channel_id=numeric_id))
+        except (ValueError, TypeError):
+            pass
+        # Otherwise resolve by username
+        return await self.rate_limited_request(
+            self.client.get_entity(channel_identifier)
+        )
+
     async def iter_channel_messages_since(
         self,
         channel_identifier: str,
         since_date: datetime,
-        min_id: int = 0,
         batch_size: int = 50,
     ) -> AsyncIterator[List[Dict[str, Any]]]:
         """
@@ -318,10 +328,12 @@ class TelegramScraper:
         forward from since_date. Handles FloodWaitError by sleeping the
         required seconds then resuming. Yields batches of batch_size messages.
 
+        No min_id filtering: the full date range is traversed and
+        deduplication is handled by the caller at DB insert time.
+
         Args:
             channel_identifier: Channel username or numeric ID string.
             since_date: Only fetch messages posted on or after this date.
-            min_id: Only fetch messages with telegram ID > min_id (incremental).
             batch_size: Number of messages per yielded batch (default 50).
 
         Yields:
@@ -334,9 +346,7 @@ class TelegramScraper:
             if not self._connected:
                 await self.connect()
 
-            entity = await self.rate_limited_request(
-                self.client.get_entity(channel_identifier)
-            )
+            entity = await self._resolve_entity(channel_identifier)
 
             # Ensure since_date is timezone-aware for Telethon
             if since_date.tzinfo is None:
@@ -346,7 +356,6 @@ class TelegramScraper:
                 entity,
                 offset_date=since_date,
                 reverse=True,
-                min_id=min_id,
                 limit=None,
             ):
                 parsed = self._parse_message(msg)
@@ -369,8 +378,6 @@ class TelegramScraper:
                 yield batch
                 batch = []
             await asyncio.sleep(e.seconds + 1)
-            # After flood wait, yield a sentinel empty batch to signal caller
-            # that iteration was interrupted (caller can retry if needed)
             logger.info(f"Resumed after FloodWait for {channel_identifier}")
 
         except Exception as e:

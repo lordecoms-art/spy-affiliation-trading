@@ -418,29 +418,17 @@ async def _scrape_channels_async(
 
         identifier = ch_username or str(ch_telegram_id)
 
-        # Incremental: find the last scraped message ID for this channel
-        db = SessionLocal()
-        try:
-            last_msg = (
-                db.query(Message)
-                .filter(Message.channel_id == ch_id)
-                .order_by(Message.telegram_message_id.desc())
-                .first()
-            )
-            min_id = last_msg.telegram_message_id if last_msg else 0
-        finally:
-            db.close()
-
         ch_new = 0
         ch_updated = 0
         ch_scraped = 0
         batch_num = 0
 
         try:
+            # No min_id: scrape ALL messages since since_date.
+            # Deduplication is handled at DB insert time.
             async for batch in scraper.iter_channel_messages_since(
                 channel_identifier=identifier,
                 since_date=since_date,
-                min_id=min_id,
                 batch_size=50,
             ):
                 batch_num += 1
