@@ -513,10 +513,11 @@ async def _scrape_channels_async(
 
 
 def _run_auto_analysis() -> None:
-    """Run AI analysis on all unanalyzed messages after scraping."""
+    """Run AI analysis on all unanalyzed messages after scraping (batch mode)."""
     global _scrape_progress
     _scrape_progress["auto_analysis"]["status"] = "in_progress"
 
+    BATCH_SIZE = 10
     db = SessionLocal()
     try:
         # Find all unanalyzed messages with text content
@@ -544,75 +545,94 @@ def _run_auto_analysis() -> None:
         analyzed = 0
         errors = 0
 
-        for msg_id in message_ids:
-            message = db.query(Message).filter(Message.id == msg_id).first()
-            if not message:
-                continue
+        # Process in batches of BATCH_SIZE
+        for batch_start in range(0, len(message_ids), BATCH_SIZE):
+            batch_ids = message_ids[batch_start : batch_start + BATCH_SIZE]
 
-            # Skip if already analyzed (race condition guard)
-            existing = (
-                db.query(MessageAnalysis)
-                .filter(MessageAnalysis.message_id == msg_id)
-                .first()
-            )
-            if existing:
-                continue
+            # Load messages and filter out already-analyzed / empty ones
+            batch_messages = []  # list of (msg_id, Message) tuples
+            batch_payloads = []  # list of dicts for the batch API
 
-            text = message.text_content
-            if message.content_type == "voice" and message.voice_transcription:
-                text = message.voice_transcription
+            for msg_id in batch_ids:
+                message = db.query(Message).filter(Message.id == msg_id).first()
+                if not message:
+                    continue
 
-            if not text or not text.strip():
+                # Skip if already analyzed (race condition guard)
+                existing = (
+                    db.query(MessageAnalysis)
+                    .filter(MessageAnalysis.message_id == msg_id)
+                    .first()
+                )
+                if existing:
+                    continue
+
+                text = message.text_content
+                if message.content_type == "voice" and message.voice_transcription:
+                    text = message.voice_transcription
+
+                if not text or not text.strip():
+                    continue
+
+                batch_messages.append((msg_id, message))
+                batch_payloads.append(
+                    {
+                        "text_content": text,
+                        "content_type": message.content_type or "text",
+                        "views_count": message.views_count,
+                        "forwards_count": message.forwards_count,
+                        "reactions_count": message.reactions_count,
+                        "has_cta": message.has_cta,
+                        "cta_text": message.cta_text,
+                        "external_links": message.external_links,
+                    }
+                )
+
+            if not batch_payloads:
                 continue
 
             try:
-                if message.content_type == "voice" and message.voice_transcription:
-                    result = message_analyzer.analyze_voice_transcript(
-                        transcript=text,
-                        duration=message.voice_duration or 0,
-                    )
-                else:
-                    result = message_analyzer.analyze_message(
-                        text_content=text,
-                        content_type=message.content_type or "text",
-                        views_count=message.views_count,
-                        forwards_count=message.forwards_count,
-                        reactions_count=message.reactions_count,
-                        has_cta=message.has_cta,
-                        cta_text=message.cta_text,
-                        external_links=message.external_links,
-                    )
+                results = message_analyzer.analyze_messages_batch(batch_payloads)
 
-                if result:
-                    analysis = MessageAnalysis(
-                        message_id=msg_id,
-                        hook_type=result.get("hook_type"),
-                        cta_type=result.get("cta_type"),
-                        tone=result.get("tone"),
-                        promises=result.get("promises"),
-                        social_proof_elements=result.get("social_proof_elements"),
-                        engagement_score=result.get("engagement_score"),
-                        virality_potential=result.get("virality_potential"),
-                        raw_analysis=result.get("raw_analysis"),
-                        analyzed_at=result.get("analyzed_at", datetime.utcnow()),
-                    )
-                    db.add(analysis)
+                if results and len(results) == len(batch_messages):
+                    for (msg_id, _message), result in zip(batch_messages, results):
+                        analysis = MessageAnalysis(
+                            message_id=msg_id,
+                            hook_type=result.get("hook_type"),
+                            cta_type=result.get("cta_type"),
+                            tone=result.get("tone"),
+                            promises=result.get("promises"),
+                            social_proof_elements=result.get("social_proof_elements"),
+                            engagement_score=result.get("engagement_score"),
+                            virality_potential=result.get("virality_potential"),
+                            raw_analysis=result.get("raw_analysis"),
+                            analyzed_at=result.get("analyzed_at", datetime.utcnow()),
+                        )
+                        db.add(analysis)
+                        analyzed += 1
+
                     db.commit()
-                    analyzed += 1
                     _scrape_progress["auto_analysis"]["analyzed"] = analyzed
                     logger.info(
-                        f"Auto-analyzed message {msg_id} ({analyzed}/{len(message_ids)})"
+                        f"Auto-analyzed batch of {len(results)} messages "
+                        f"({analyzed}/{len(message_ids)} total)"
                     )
                 else:
-                    errors += 1
+                    logger.error(
+                        f"Batch analysis returned unexpected results "
+                        f"(got {len(results) if results else 0}, "
+                        f"expected {len(batch_messages)})"
+                    )
+                    errors += len(batch_messages)
                     _scrape_progress["auto_analysis"]["errors"] = errors
 
             except Exception as e:
-                logger.error(f"Auto-analysis error for message {msg_id}: {e}")
-                errors += 1
+                logger.error(f"Auto-analysis batch error: {e}")
+                db.rollback()
+                errors += len(batch_messages)
                 _scrape_progress["auto_analysis"]["errors"] = errors
 
-            # Rate limit between API calls
+            # Rate limit: wait 1s between batches
             time.sleep(1)
 
     except Exception as e:

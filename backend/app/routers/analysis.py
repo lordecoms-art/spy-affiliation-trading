@@ -69,6 +69,23 @@ class AnalyzeResultResponse(BaseModel):
     error: Optional[str]
 
 
+class ChannelProgressItem(BaseModel):
+    channel_id: int
+    channel_title: str
+    total: int
+    analyzed: int
+    pct: float
+
+
+class AnalysisProgressResponse(BaseModel):
+    total_messages: int
+    total_with_text: int
+    analyzed: int
+    pending: int
+    progress_pct: float
+    per_channel: List[ChannelProgressItem]
+
+
 class RunAnalysisResponse(BaseModel):
     status: str
     messages_queued: int
@@ -86,6 +103,88 @@ class InsightsResponse(BaseModel):
 
 
 # ---- Endpoints ----
+
+
+@router.get("/progress", response_model=AnalysisProgressResponse)
+def get_analysis_progress(
+    db: Session = Depends(get_db),
+) -> dict:
+    """Get analysis progress: how many messages are analyzed vs pending."""
+    from sqlalchemy import exists as sa_exists
+
+    # Total messages
+    total_messages = db.query(func.count(Message.id)).scalar() or 0
+
+    # Total with text content
+    total_with_text = (
+        db.query(func.count(Message.id))
+        .filter(
+            Message.text_content.isnot(None),
+            Message.text_content != "",
+        )
+        .scalar()
+        or 0
+    )
+
+    # Analyzed count
+    analyzed = db.query(func.count(MessageAnalysis.id)).scalar() or 0
+
+    # Pending = with text but not yet analyzed
+    pending = (
+        db.query(func.count(Message.id))
+        .filter(
+            Message.text_content.isnot(None),
+            Message.text_content != "",
+            ~sa_exists().where(MessageAnalysis.message_id == Message.id),
+        )
+        .scalar()
+        or 0
+    )
+
+    progress_pct = round((analyzed / total_with_text * 100), 2) if total_with_text > 0 else 0.0
+
+    # Per-channel breakdown
+    per_channel_rows = (
+        db.query(
+            Channel.id.label("channel_id"),
+            Channel.title.label("channel_title"),
+            func.count(Message.id).label("total"),
+            func.count(MessageAnalysis.id).label("analyzed"),
+        )
+        .join(Message, Message.channel_id == Channel.id)
+        .outerjoin(MessageAnalysis, MessageAnalysis.message_id == Message.id)
+        .filter(
+            Message.text_content.isnot(None),
+            Message.text_content != "",
+        )
+        .group_by(Channel.id, Channel.title)
+        .order_by(Channel.title)
+        .all()
+    )
+
+    per_channel = []
+    for row in per_channel_rows:
+        ch_total = row.total or 0
+        ch_analyzed = row.analyzed or 0
+        ch_pct = round((ch_analyzed / ch_total * 100), 2) if ch_total > 0 else 0.0
+        per_channel.append(
+            {
+                "channel_id": row.channel_id,
+                "channel_title": row.channel_title,
+                "total": ch_total,
+                "analyzed": ch_analyzed,
+                "pct": ch_pct,
+            }
+        )
+
+    return {
+        "total_messages": total_messages,
+        "total_with_text": total_with_text,
+        "analyzed": analyzed,
+        "pending": pending,
+        "progress_pct": progress_pct,
+        "per_channel": per_channel,
+    }
 
 
 @router.get("/", response_model=List[AnalysisWithMessageResponse])
@@ -464,78 +563,100 @@ def run_analysis_all(
 
 
 def _analyze_all_bg(message_ids: list) -> None:
-    """Background task: analyze messages one by one."""
+    """Background task: analyze messages in batches of 10."""
     import time
 
+    BATCH_SIZE = 10
     db = SessionLocal()
     analyzed = 0
     errors = 0
 
     try:
-        for msg_id in message_ids:
-            message = db.query(Message).filter(Message.id == msg_id).first()
-            if not message:
-                continue
+        # Process in batches of BATCH_SIZE
+        for batch_start in range(0, len(message_ids), BATCH_SIZE):
+            batch_ids = message_ids[batch_start : batch_start + BATCH_SIZE]
 
-            # Skip if already analyzed (race condition guard)
-            existing = (
-                db.query(MessageAnalysis)
-                .filter(MessageAnalysis.message_id == msg_id)
-                .first()
-            )
-            if existing:
-                continue
+            # Load messages and filter out already-analyzed / empty ones
+            batch_messages = []  # list of (msg_id, Message) tuples
+            batch_payloads = []  # list of dicts for the batch API
 
-            text = message.text_content
-            if message.content_type == "voice" and message.voice_transcription:
-                text = message.voice_transcription
+            for msg_id in batch_ids:
+                message = db.query(Message).filter(Message.id == msg_id).first()
+                if not message:
+                    continue
 
-            if not text or not text.strip():
+                # Skip if already analyzed (race condition guard)
+                existing = (
+                    db.query(MessageAnalysis)
+                    .filter(MessageAnalysis.message_id == msg_id)
+                    .first()
+                )
+                if existing:
+                    continue
+
+                text = message.text_content
+                if message.content_type == "voice" and message.voice_transcription:
+                    text = message.voice_transcription
+
+                if not text or not text.strip():
+                    continue
+
+                batch_messages.append((msg_id, message))
+                batch_payloads.append(
+                    {
+                        "text_content": text,
+                        "content_type": message.content_type or "text",
+                        "views_count": message.views_count,
+                        "forwards_count": message.forwards_count,
+                        "reactions_count": message.reactions_count,
+                        "has_cta": message.has_cta,
+                        "cta_text": message.cta_text,
+                        "external_links": message.external_links,
+                    }
+                )
+
+            if not batch_payloads:
                 continue
 
             try:
-                if message.content_type == "voice" and message.voice_transcription:
-                    result = message_analyzer.analyze_voice_transcript(
-                        transcript=text,
-                        duration=message.voice_duration or 0,
-                    )
-                else:
-                    result = message_analyzer.analyze_message(
-                        text_content=text,
-                        content_type=message.content_type or "text",
-                        views_count=message.views_count,
-                        forwards_count=message.forwards_count,
-                        reactions_count=message.reactions_count,
-                        has_cta=message.has_cta,
-                        cta_text=message.cta_text,
-                        external_links=message.external_links,
-                    )
+                results = message_analyzer.analyze_messages_batch(batch_payloads)
 
-                if result:
-                    analysis = MessageAnalysis(
-                        message_id=msg_id,
-                        hook_type=result.get("hook_type"),
-                        cta_type=result.get("cta_type"),
-                        tone=result.get("tone"),
-                        promises=result.get("promises"),
-                        social_proof_elements=result.get("social_proof_elements"),
-                        engagement_score=result.get("engagement_score"),
-                        virality_potential=result.get("virality_potential"),
-                        raw_analysis=result.get("raw_analysis"),
-                        analyzed_at=result.get("analyzed_at", datetime.utcnow()),
-                    )
-                    db.add(analysis)
+                if results and len(results) == len(batch_messages):
+                    for (msg_id, _message), result in zip(batch_messages, results):
+                        analysis = MessageAnalysis(
+                            message_id=msg_id,
+                            hook_type=result.get("hook_type"),
+                            cta_type=result.get("cta_type"),
+                            tone=result.get("tone"),
+                            promises=result.get("promises"),
+                            social_proof_elements=result.get("social_proof_elements"),
+                            engagement_score=result.get("engagement_score"),
+                            virality_potential=result.get("virality_potential"),
+                            raw_analysis=result.get("raw_analysis"),
+                            analyzed_at=result.get("analyzed_at", datetime.utcnow()),
+                        )
+                        db.add(analysis)
+                        analyzed += 1
+
                     db.commit()
-                    analyzed += 1
-                    logger.info(f"Analyzed message {msg_id} ({analyzed}/{len(message_ids)})")
+                    logger.info(
+                        f"Batch analyzed {len(results)} messages "
+                        f"({analyzed}/{len(message_ids)} total)"
+                    )
                 else:
-                    errors += 1
+                    logger.error(
+                        f"Batch analysis returned unexpected results "
+                        f"(got {len(results) if results else 0}, "
+                        f"expected {len(batch_messages)})"
+                    )
+                    errors += len(batch_messages)
 
             except Exception as e:
-                logger.error(f"Error analyzing message {msg_id}: {e}")
-                errors += 1
+                logger.error(f"Error in batch analysis: {e}")
+                db.rollback()
+                errors += len(batch_messages)
 
-            # Rate limit: wait between API calls
+            # Rate limit: wait 1s between batches
             time.sleep(1)
 
     except Exception as e:

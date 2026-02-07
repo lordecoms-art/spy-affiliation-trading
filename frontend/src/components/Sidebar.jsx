@@ -5,6 +5,9 @@ import {
   Radio,
   MessageSquare,
   Lightbulb,
+  BookOpen,
+  GitCompare,
+  Sparkles,
   Settings,
   TrendingUp,
 } from 'lucide-react';
@@ -15,6 +18,9 @@ const navigation = [
   { name: 'Channels', path: '/channels', icon: Radio },
   { name: 'Analysis', path: '/analysis', icon: MessageSquare },
   { name: 'Insights', path: '/insights', icon: Lightbulb },
+  { name: 'Swipe File', path: '/swipe-file', icon: BookOpen },
+  { name: 'Compare', path: '/compare', icon: GitCompare },
+  { name: 'Generator', path: '/generator', icon: Sparkles },
   { name: 'Settings', path: '/settings', icon: Settings },
 ];
 

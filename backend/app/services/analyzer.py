@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from anthropic import Anthropic
 
@@ -179,6 +179,145 @@ class MessageAnalyzer:
             return None
         except Exception as e:
             logger.error(f"Error analyzing message: {e}")
+            return None
+
+    def analyze_messages_batch(
+        self, messages: List[Dict[str, Any]]
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Analyze a batch of messages (up to 10) in a single Claude API call.
+
+        Args:
+            messages: List of dicts, each with keys: text_content, content_type,
+                      views_count, forwards_count, reactions_count, has_cta,
+                      cta_text, external_links.
+
+        Returns:
+            List of result dicts (one per message) or None on failure.
+            Each result dict has: hook_type, cta_type, tone, promises,
+            social_proof_elements, engagement_score, virality_potential,
+            raw_analysis, analyzed_at.
+        """
+        if not messages:
+            logger.warning("Empty messages list, skipping batch analysis.")
+            return None
+
+        # Build numbered message blocks
+        message_blocks = []
+        for i, msg in enumerate(messages):
+            text = msg.get("text_content", "")
+            if not text or not text.strip():
+                text = "(empty)"
+            block = (
+                f"=== MESSAGE {i + 1} ===\n"
+                f"TEXT:\n{text}\n"
+                f"Content type: {msg.get('content_type', 'text')}\n"
+                f"Views: {msg.get('views_count', 0)}\n"
+                f"Forwards: {msg.get('forwards_count', 0)}\n"
+                f"Reactions: {msg.get('reactions_count', 0)}\n"
+                f"Has CTA button: {msg.get('has_cta', False)}\n"
+                f"CTA text: {msg.get('cta_text') or 'N/A'}\n"
+                f"External links: {msg.get('external_links') or 'None'}\n"
+            )
+            message_blocks.append(block)
+
+        all_messages_text = "\n".join(message_blocks)
+
+        prompt = (
+            "You are an expert marketing analyst specializing in Telegram affiliate "
+            "marketing and trading channels. Analyze each of the following messages "
+            "and provide a structured analysis for EACH one.\n\n"
+            f"{all_messages_text}\n\n"
+            f"Return a JSON array with exactly {len(messages)} objects (one per message, "
+            "in the same order). Each object must have exactly these fields:\n\n"
+            "{\n"
+            '    "hook_type": "one of: question, bold_claim, statistic, story, urgency, '
+            'fear, curiosity, social_proof, authority, pain_point, none",\n'
+            '    "cta_type": "one of: link_click, join_channel, buy_product, sign_up, '
+            'contact_dm, forward_message, none",\n'
+            '    "tone": "one of: urgent, professional, casual, aggressive, educational, '
+            'inspirational, fear_based, friendly",\n'
+            '    "promises": ["list of specific promises or claims made in the message"],\n'
+            '    "social_proof_elements": ["list of social proof elements used"],\n'
+            '    "engagement_score": 0.0 to 10.0,\n'
+            '    "virality_potential": 0.0 to 10.0\n'
+            "}\n\n"
+            "IMPORTANT:\n"
+            "- engagement_score: Rate 0-10 based on how engaging the message is.\n"
+            "- virality_potential: Rate 0-10 based on likelihood of being forwarded/shared.\n"
+            "- Be precise and factual. Only list promises/social_proof that are actually present.\n"
+            "- Return ONLY the JSON array, no other text.\n"
+        )
+
+        try:
+            response = self.client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=4096,
+                messages=[
+                    {"role": "user", "content": prompt},
+                ],
+            )
+
+            response_text = response.content[0].text.strip()
+
+            # Clean potential markdown code block wrapper
+            if response_text.startswith("```"):
+                lines = response_text.split("\n")
+                lines = [
+                    line
+                    for line in lines
+                    if not line.strip().startswith("```")
+                ]
+                response_text = "\n".join(lines)
+
+            analyses = json.loads(response_text)
+
+            if not isinstance(analyses, list):
+                logger.error("Batch analysis response is not a JSON array.")
+                return None
+
+            # Pad or truncate to match input length
+            now = datetime.utcnow()
+            results: List[Dict[str, Any]] = []
+
+            for i in range(len(messages)):
+                if i < len(analyses):
+                    a = analyses[i]
+                else:
+                    # If Claude returned fewer results, use defaults
+                    a = {}
+
+                result: Dict[str, Any] = {
+                    "hook_type": str(a.get("hook_type", "none")),
+                    "cta_type": str(a.get("cta_type", "none")),
+                    "tone": str(a.get("tone", "casual")),
+                    "promises": json.dumps(a.get("promises", [])),
+                    "social_proof_elements": json.dumps(
+                        a.get("social_proof_elements", [])
+                    ),
+                    "engagement_score": float(
+                        a.get("engagement_score", 0.0)
+                    ),
+                    "virality_potential": float(
+                        a.get("virality_potential", 0.0)
+                    ),
+                    "raw_analysis": json.dumps(a),
+                    "analyzed_at": now,
+                }
+                results.append(result)
+
+            logger.info(
+                f"Batch analysis complete: {len(results)} messages analyzed."
+            )
+            return results
+
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"Failed to parse batch analysis response as JSON: {e}"
+            )
+            return None
+        except Exception as e:
+            logger.error(f"Error in batch analysis: {e}")
             return None
 
     def analyze_voice_transcript(

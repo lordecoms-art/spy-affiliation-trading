@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Radio,
@@ -9,6 +9,9 @@ import {
   Eye,
   ArrowUpRight,
   Clock,
+  Flame,
+  Zap,
+  BarChart3,
 } from 'lucide-react';
 import {
   BarChart,
@@ -23,6 +26,7 @@ import StatCard from '../components/StatCard';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
 import useAppStore from '../stores/appStore';
+import api from '../utils/api';
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
@@ -38,6 +42,31 @@ const CustomTooltip = ({ active, payload, label }) => {
   return null;
 };
 
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function HeatmapCell({ value, maxValue }) {
+  const intensity = maxValue > 0 ? value / maxValue : 0;
+  const bg =
+    intensity > 0.8
+      ? 'bg-emerald-500'
+      : intensity > 0.6
+      ? 'bg-emerald-500/70'
+      : intensity > 0.4
+      ? 'bg-emerald-500/50'
+      : intensity > 0.2
+      ? 'bg-emerald-500/30'
+      : intensity > 0
+      ? 'bg-emerald-500/15'
+      : 'bg-zinc-800/50';
+
+  return (
+    <div
+      className={`w-full aspect-square rounded-sm ${bg} cursor-pointer transition-colors`}
+      title={`${value} avg views`}
+    />
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const {
@@ -50,10 +79,17 @@ export default function Dashboard() {
     fetchAnalysis,
   } = useAppStore();
 
+  const [trends, setTrends] = useState(null);
+  const [heatmap, setHeatmap] = useState(null);
+
   useEffect(() => {
     fetchStats();
     fetchChannels();
     fetchAnalysis();
+
+    // Fetch trends and heatmap
+    api.get('/stats/trends').then((r) => setTrends(r.data)).catch(() => {});
+    api.get('/stats/heatmap').then((r) => setHeatmap(r.data)).catch(() => {});
   }, [fetchStats, fetchChannels, fetchAnalysis]);
 
   const topChannels = [...channels]
@@ -93,6 +129,24 @@ export default function Dashboard() {
       type: 'discovery',
     })),
   ].slice(0, 5);
+
+  // Build heatmap grid (7 days x 24 hours)
+  const heatmapGrid = [];
+  let heatmapMax = 0;
+  if (heatmap?.heatmap) {
+    const lookup = {};
+    for (const cell of heatmap.heatmap) {
+      lookup[`${cell.day}-${cell.hour}`] = cell.avg_views;
+      if (cell.avg_views > heatmapMax) heatmapMax = cell.avg_views;
+    }
+    for (let day = 0; day < 7; day++) {
+      const row = [];
+      for (let hour = 0; hour < 24; hour++) {
+        row.push(lookup[`${day}-${hour}`] || 0);
+      }
+      heatmapGrid.push(row);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -225,6 +279,226 @@ export default function Dashboard() {
           ) : (
             <div className="flex items-center justify-center h-64 text-zinc-500">
               <p>No messages analyzed yet</p>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* Trends & Heatmap Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Trending Hooks */}
+        <Card>
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-semibold text-zinc-100">
+              Trending Hooks
+            </h3>
+            <Flame className="w-5 h-5 text-orange-500" />
+          </div>
+          {trends?.top_hooks?.length > 0 ? (
+            <div className="space-y-3">
+              {trends.top_hooks.slice(0, 6).map((hook, i) => (
+                <div key={hook.type} className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-zinc-500 w-5">
+                    {i + 1}
+                  </span>
+                  <Badge variant={hook.type}>{hook.type}</Badge>
+                  <div className="flex-1">
+                    <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-orange-500/70 rounded-full"
+                        style={{
+                          width: `${Math.min(
+                            (hook.count /
+                              Math.max(
+                                ...trends.top_hooks.map((h) => h.count)
+                              )) *
+                              100,
+                            100
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <span className="text-sm text-zinc-400 w-10 text-right">
+                    {hook.count}
+                  </span>
+                  <span className="text-xs text-emerald-500 w-12 text-right">
+                    {hook.avg_engagement}/10
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-40 text-zinc-500">
+              <p>No trend data yet</p>
+            </div>
+          )}
+        </Card>
+
+        {/* Best Time to Post Heatmap */}
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-zinc-100">
+              Best Time to Post
+            </h3>
+            <Zap className="w-5 h-5 text-yellow-500" />
+          </div>
+          {heatmap?.best_time && (
+            <p className="text-sm text-zinc-400 mb-4">
+              Best:{' '}
+              <span className="text-emerald-400 font-medium">
+                {heatmap.best_time.day} at {heatmap.best_time.hour}:00
+              </span>{' '}
+              ({Math.round(heatmap.best_time.avg_views).toLocaleString()} avg
+              views)
+            </p>
+          )}
+          {heatmapGrid.length > 0 ? (
+            <div className="space-y-1">
+              {/* Hour labels */}
+              <div className="flex gap-0.5 ml-10">
+                {Array.from({ length: 24 }, (_, h) => (
+                  <div
+                    key={h}
+                    className="flex-1 text-center text-[10px] text-zinc-600"
+                  >
+                    {h % 3 === 0 ? `${h}h` : ''}
+                  </div>
+                ))}
+              </div>
+              {/* Grid rows */}
+              {heatmapGrid.map((row, dayIdx) => (
+                <div key={dayIdx} className="flex items-center gap-0.5">
+                  <span className="text-xs text-zinc-500 w-10 text-right pr-2">
+                    {DAY_LABELS[dayIdx]}
+                  </span>
+                  {row.map((value, hourIdx) => (
+                    <div key={hourIdx} className="flex-1">
+                      <HeatmapCell value={value} maxValue={heatmapMax} />
+                    </div>
+                  ))}
+                </div>
+              ))}
+              {/* Legend */}
+              <div className="flex items-center justify-end gap-1 mt-2">
+                <span className="text-[10px] text-zinc-600">Less</span>
+                <div className="w-3 h-3 rounded-sm bg-zinc-800/50" />
+                <div className="w-3 h-3 rounded-sm bg-emerald-500/15" />
+                <div className="w-3 h-3 rounded-sm bg-emerald-500/30" />
+                <div className="w-3 h-3 rounded-sm bg-emerald-500/50" />
+                <div className="w-3 h-3 rounded-sm bg-emerald-500/70" />
+                <div className="w-3 h-3 rounded-sm bg-emerald-500" />
+                <span className="text-[10px] text-zinc-600">More</span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-40 text-zinc-500">
+              <p>No posting data yet</p>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* Best Hours + Channel Activity Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Best Posting Hours */}
+        <Card>
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-semibold text-zinc-100">
+              Best Posting Hours
+            </h3>
+            <BarChart3 className="w-5 h-5 text-purple-500" />
+          </div>
+          {trends?.best_hours?.length > 0 ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart
+                data={trends.best_hours.map((h) => ({
+                  hour: `${h.hour}:00`,
+                  avgViews: Math.round(h.avg_views),
+                  count: h.count,
+                }))}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                <XAxis
+                  dataKey="hour"
+                  tick={{ fill: '#71717a', fontSize: 12 }}
+                  axisLine={{ stroke: '#27272a' }}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fill: '#71717a', fontSize: 12 }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v) =>
+                    v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v
+                  }
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#27272a',
+                    border: '1px solid #3f3f46',
+                    borderRadius: '8px',
+                  }}
+                  labelStyle={{ color: '#a1a1aa' }}
+                  itemStyle={{ color: '#a78bfa' }}
+                />
+                <Bar
+                  dataKey="avgViews"
+                  fill="#a78bfa"
+                  radius={[4, 4, 0, 0]}
+                  barSize={30}
+                  name="Avg Views"
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-40 text-zinc-500">
+              <p>No posting data yet</p>
+            </div>
+          )}
+        </Card>
+
+        {/* Channel Activity Summary */}
+        <Card>
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-semibold text-zinc-100">
+              Channel Activity
+            </h3>
+            <Radio className="w-5 h-5 text-cyan-500" />
+          </div>
+          {trends?.channel_summaries?.length > 0 ? (
+            <div className="space-y-3">
+              {trends.channel_summaries.slice(0, 6).map((ch) => (
+                <div
+                  key={ch.channel_id}
+                  className="flex items-center gap-3 p-2 rounded-lg hover:bg-zinc-800/50 cursor-pointer transition-colors"
+                  onClick={() => navigate(`/channels/${ch.channel_id}`)}
+                >
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                    <span className="text-emerald-500 font-bold text-xs">
+                      {(ch.title || '?')[0].toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-zinc-200 truncate">
+                      {ch.title}
+                    </p>
+                    <p className="text-xs text-zinc-500">
+                      {ch.total_messages} msgs
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-cyan-400">
+                      {Math.round(ch.avg_views).toLocaleString()}
+                    </p>
+                    <p className="text-[10px] text-zinc-500">avg views</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-40 text-zinc-500">
+              <p>No channel data yet</p>
             </div>
           )}
         </Card>

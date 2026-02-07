@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, extract
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -318,4 +318,147 @@ def trigger_stats_snapshot(
         "channel_title": channel.title,
         "subscribers_count": subscribers_count,
         "snapshot_recorded": True,
+    }
+
+
+@router.get("/heatmap")
+def get_posting_heatmap(
+    db: Session = Depends(get_db),
+) -> dict:
+    """Get posting time heatmap data: day of week x hour.
+
+    Returns engagement averages for all tracked channels.
+    """
+    rows = (
+        db.query(
+            extract("dow", Message.posted_at).label("dow"),
+            extract("hour", Message.posted_at).label("hour"),
+            func.avg(Message.views_count).label("avg_views"),
+            func.count(Message.id).label("count"),
+        )
+        .filter(Message.posted_at.isnot(None))
+        .group_by(
+            extract("dow", Message.posted_at),
+            extract("hour", Message.posted_at),
+        )
+        .all()
+    )
+
+    heatmap = []
+    for r in rows:
+        heatmap.append({
+            "day": int(r.dow) if r.dow is not None else 0,
+            "hour": int(r.hour) if r.hour is not None else 0,
+            "avg_views": round(float(r.avg_views), 0) if r.avg_views else 0,
+            "count": r.count,
+        })
+
+    # Find best time
+    best = max(heatmap, key=lambda x: x["avg_views"]) if heatmap else None
+    day_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+    return {
+        "heatmap": heatmap,
+        "best_time": {
+            "day": day_names[best["day"]] if best else "N/A",
+            "hour": best["hour"] if best else 0,
+            "avg_views": best["avg_views"] if best else 0,
+        } if best else None,
+    }
+
+
+@router.get("/trends")
+def get_trends(
+    db: Session = Depends(get_db),
+) -> dict:
+    """Get trending data: top hooks, posting patterns, alerts."""
+    from collections import Counter
+
+    # Top hooks across all channels
+    all_analyses = (
+        db.query(
+            MessageAnalysis.hook_type,
+            MessageAnalysis.engagement_score,
+            Message.channel_id,
+            Message.posted_at,
+            Message.views_count,
+        )
+        .join(Message, Message.id == MessageAnalysis.message_id)
+        .filter(MessageAnalysis.hook_type.isnot(None))
+        .all()
+    )
+
+    hook_counter = Counter()
+    hook_scores = {}
+    for hook, score, ch_id, posted_at, views in all_analyses:
+        if hook and hook != "none":
+            hook_counter[hook] += 1
+            if hook not in hook_scores:
+                hook_scores[hook] = []
+            if score is not None:
+                hook_scores[hook].append(score)
+
+    top_hooks = [
+        {
+            "type": h,
+            "count": c,
+            "avg_engagement": round(
+                sum(hook_scores.get(h, [0])) / max(len(hook_scores.get(h, [1])), 1), 2
+            ),
+        }
+        for h, c in hook_counter.most_common(10)
+    ]
+
+    # Best posting hours globally
+    hour_data = (
+        db.query(
+            extract("hour", Message.posted_at).label("hour"),
+            func.avg(Message.views_count).label("avg_views"),
+            func.count(Message.id).label("count"),
+        )
+        .filter(Message.posted_at.isnot(None))
+        .group_by(extract("hour", Message.posted_at))
+        .order_by(func.avg(Message.views_count).desc())
+        .limit(5)
+        .all()
+    )
+
+    best_hours = [
+        {
+            "hour": int(h.hour) if h.hour is not None else 0,
+            "avg_views": round(float(h.avg_views), 0) if h.avg_views else 0,
+            "count": h.count,
+        }
+        for h in hour_data
+    ]
+
+    # Per-channel message count for alerts
+    channel_activity = (
+        db.query(
+            Channel.id,
+            Channel.title,
+            func.count(Message.id).label("msg_count"),
+            func.avg(Message.views_count).label("avg_views"),
+        )
+        .join(Message, Message.channel_id == Channel.id)
+        .filter(Channel.status == "approved")
+        .group_by(Channel.id, Channel.title)
+        .order_by(func.count(Message.id).desc())
+        .all()
+    )
+
+    channel_summaries = [
+        {
+            "channel_id": ca.id,
+            "title": ca.title,
+            "total_messages": ca.msg_count,
+            "avg_views": round(float(ca.avg_views), 0) if ca.avg_views else 0,
+        }
+        for ca in channel_activity
+    ]
+
+    return {
+        "top_hooks": top_hooks,
+        "best_hours": best_hours,
+        "channel_summaries": channel_summaries,
     }

@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func, extract
 from sqlalchemy.orm import Session
 
@@ -748,4 +749,117 @@ def generate_content_plan(
         raise HTTPException(
             status_code=500,
             detail="Plan generation failed: {}".format(str(e)),
+        )
+
+
+class GenerateContentRequest(BaseModel):
+    channel_ids: List[int]
+    message_type: str = "hook"
+    subject: str
+    remix: bool = False
+    num_variants: int = 5
+
+
+@router.post("/generate-content")
+def generate_content(
+    req: GenerateContentRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Generate content variants inspired by channel styles."""
+    channels_info = []
+    sample_texts = []
+
+    for ch_id in req.channel_ids[:3]:
+        channel = db.query(Channel).filter(Channel.id == ch_id).first()
+        if not channel:
+            continue
+        channels_info.append(channel.title)
+
+        msgs = (
+            db.query(Message.text_content)
+            .filter(
+                Message.channel_id == ch_id,
+                Message.text_content.isnot(None),
+                Message.text_content != "",
+            )
+            .order_by(Message.views_count.desc())
+            .limit(15)
+            .all()
+        )
+        for (text,) in msgs:
+            if text:
+                sample_texts.append(text[:300])
+
+    if not channels_info or not sample_texts:
+        raise HTTPException(status_code=404, detail="No channel data found")
+
+    channels_str = " + ".join(channels_info)
+    samples_str = "\n---\n".join(sample_texts[:20])
+
+    if req.remix and len(channels_info) > 1:
+        style_instruction = (
+            "Mix the writing styles of these channels: {}. "
+            "Combine elements from each style into a unique voice."
+        ).format(channels_str)
+    else:
+        style_instruction = (
+            "Write in the exact same style, tone, and formatting as the "
+            "channel '{}'. Mimic their vocabulary, emoji usage, message "
+            "structure, and voice perfectly."
+        ).format(channels_info[0])
+
+    prompt = (
+        "You are a Telegram content creator. {style}\n\n"
+        "SAMPLE MESSAGES FROM THE CHANNEL(S):\n{samples}\n\n"
+        "TASK: Create {num} message variants for this topic:\n"
+        "Subject: {subject}\n"
+        "Message type: {msg_type}\n\n"
+        "Return a JSON array with {num} variants:\n"
+        "[\n"
+        '  {{\n'
+        '    "text": "the full message text exactly as it would be posted",\n'
+        '    "hook_type": "question/bold_claim/statistic/story/urgency/social_proof/etc",\n'
+        '    "cta_type": "link_click/join_channel/contact_dm/none/etc",\n'
+        '    "style": "description of style used",\n'
+        '    "explanation": "why this variant works"\n'
+        '  }}\n'
+        "]\n\n"
+        "IMPORTANT: Write the messages in the SAME LANGUAGE as the sample messages. "
+        "Include emojis and formatting exactly like the channel would. "
+        "Return ONLY the JSON array, no other text."
+    ).format(
+        style=style_instruction,
+        samples=samples_str,
+        num=req.num_variants,
+        subject=req.subject,
+        msg_type=req.message_type,
+    )
+
+    try:
+        response = message_analyzer.client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw_text = response.content[0].text.strip()
+
+        if raw_text.startswith("```"):
+            lines = raw_text.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            raw_text = "\n".join(lines)
+
+        variants = json.loads(raw_text)
+        if not isinstance(variants, list):
+            variants = [variants]
+
+        return {"status": "success", "variants": variants}
+
+    except json.JSONDecodeError as e:
+        logger.error("Failed to parse generated content: {}".format(e))
+        return {"status": "partial", "raw_text": raw_text, "error": str(e)}
+    except Exception as e:
+        logger.error("Content generation failed: {}".format(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Content generation failed: {}".format(str(e)),
         )
