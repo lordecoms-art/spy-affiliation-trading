@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown events."""
     # Startup
-    logger.info("Starting Spy Affiliation Trading backend v1.1...")
+    logger.info("Starting Spy Affiliation Trading backend v1.2...")
 
     # Restore Telegram session file from env var if available
     session_data = os.environ.get("TELEGRAM_SESSION_DATA")
