@@ -355,8 +355,15 @@ def sync_telegram_channels(
 
 
 def _enrich_all_channels() -> None:
-    """Background task: enrich every channel with photo, subscribers, description."""
+    """Background task: enrich every channel with photo, subscribers, description.
+
+    Creates a fresh TelegramScraper to avoid event loop conflicts with the
+    main request handler (Telethon binds to one event loop).
+    """
+    from app.services.telegram_client import TelegramScraper
+
     db = SessionLocal()
+    scraper = TelegramScraper()
     try:
         channels = db.query(Channel).filter(
             Channel.status.in_(["pending", "approved"])
@@ -366,8 +373,9 @@ def _enrich_all_channels() -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(_enrich_channels_async(channels, db))
+            loop.run_until_complete(_enrich_channels_async(scraper, channels, db))
         finally:
+            loop.run_until_complete(scraper.disconnect())
             loop.close()
     except Exception as e:
         logger.error(f"Background enrichment failed: {e}")
@@ -375,9 +383,9 @@ def _enrich_all_channels() -> None:
         db.close()
 
 
-async def _enrich_channels_async(channels: list, db) -> None:
+async def _enrich_channels_async(scraper, channels: list, db) -> None:
     """Async helper: loop through channels and enrich one by one with delay."""
-    connected = await telegram_scraper.connect()
+    connected = await scraper.connect()
     if not connected:
         logger.error("Cannot enrich channels: Telegram not connected.")
         return
@@ -385,7 +393,7 @@ async def _enrich_channels_async(channels: list, db) -> None:
     enriched = 0
     for ch in channels:
         try:
-            data = await telegram_scraper.enrich_channel(ch.telegram_id)
+            data = await scraper.enrich_channel(ch.telegram_id)
             if data:
                 ch.description = data.get("description") or ch.description
                 ch.photo_url = data.get("photo_url") or ch.photo_url
