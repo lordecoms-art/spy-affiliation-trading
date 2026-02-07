@@ -23,15 +23,16 @@ logger = logging.getLogger(__name__)
 class TelegramScraper:
     """Telethon-based Telegram scraper with rate limiting."""
 
-    def __init__(self) -> None:
+    def __init__(self, session_name: Optional[str] = None) -> None:
         self._client: Optional[TelegramClient] = None
         self._connected: bool = False
+        self._session_name = session_name or settings.TELEGRAM_SESSION_NAME
 
     @property
     def client(self) -> TelegramClient:
         if self._client is None:
             self._client = TelegramClient(
-                settings.TELEGRAM_SESSION_NAME,
+                self._session_name,
                 settings.TELEGRAM_API_ID,
                 settings.TELEGRAM_API_HASH,
             )

@@ -357,13 +357,25 @@ def sync_telegram_channels(
 def _enrich_all_channels() -> None:
     """Background task: enrich every channel with photo, subscribers, description.
 
-    Creates a fresh TelegramScraper to avoid event loop conflicts with the
-    main request handler (Telethon binds to one event loop).
+    Creates a fresh TelegramScraper with a separate session file to avoid
+    event loop conflicts and SQLite locking with the main scraper.
     """
+    import shutil
+    from app.config import settings
     from app.services.telegram_client import TelegramScraper
 
+    # Copy session file so the background client doesn't lock the main one
+    src_session = f"{settings.TELEGRAM_SESSION_NAME}.session"
+    bg_session_name = f"{settings.TELEGRAM_SESSION_NAME}_bg"
+    bg_session = f"{bg_session_name}.session"
+    try:
+        shutil.copy2(src_session, bg_session)
+    except Exception as e:
+        logger.error(f"Failed to copy session file for background enrichment: {e}")
+        return
+
     db = SessionLocal()
-    scraper = TelegramScraper()
+    scraper = TelegramScraper(session_name=bg_session_name)
     try:
         channels = db.query(Channel).filter(
             Channel.status.in_(["pending", "approved"])
