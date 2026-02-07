@@ -71,7 +71,8 @@ app = FastAPI(
         "and trading channels. Scrape messages, analyze content with AI, "
         "and track engagement metrics."
     ),
-    version="1.0.0",
+    version="1.0.2",
+    redirect_slashes=False,
     lifespan=lifespan,
 )
 
