@@ -3,7 +3,7 @@ import axios from 'axios';
 const getBaseURL = () => {
   if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
-    return window.location.origin.replace('frontend-', 'backend-') + '/api';
+    return 'https://backend-production-3aa4.up.railway.app/api';
   }
   return '/api';
 };

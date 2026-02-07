@@ -10,20 +10,40 @@ import {
   X,
   Loader2,
   CheckCircle2,
+  RefreshCw,
 } from 'lucide-react';
 import Card from '../components/Card';
 import useAppStore from '../stores/appStore';
 
 export default function Settings() {
-  const { settings, settingsLoading, saveSettings } = useAppStore();
+  const {
+    settings,
+    settingsLoading,
+    saveSettings,
+    channels,
+    pendingChannels,
+    fetchChannels,
+    fetchHealthStatus,
+    healthStatus,
+    syncTelegram,
+    syncing,
+  } = useAppStore();
   const [localSettings, setLocalSettings] = useState(settings);
   const [anthropicKey, setAnthropicKey] = useState('');
   const [newCategory, setNewCategory] = useState('');
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    fetchHealthStatus();
+    fetchChannels();
+  }, [fetchHealthStatus, fetchChannels]);
+
+  useEffect(() => {
     setLocalSettings(settings);
   }, [settings]);
+
+  const telegramConnected = healthStatus?.telegram_configured === true;
+  const totalChannels = channels.length + pendingChannels.length;
 
   const handleChange = (key, value) => {
     setLocalSettings((prev) => ({ ...prev, [key]: value }));
@@ -55,6 +75,15 @@ export default function Settings() {
     await saveSettings(settingsToSave);
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
+  };
+
+  const handleSync = async () => {
+    try {
+      await syncTelegram();
+      await fetchHealthStatus();
+    } catch (e) {
+      console.error('Sync failed:', e);
+    }
   };
 
   return (
@@ -113,7 +142,7 @@ export default function Settings() {
       <Card>
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
-            {localSettings.telegramConnected ? (
+            {telegramConnected ? (
               <Wifi className="w-5 h-5 text-emerald-500" />
             ) : (
               <WifiOff className="w-5 h-5 text-red-500" />
@@ -124,21 +153,21 @@ export default function Settings() {
           </div>
           <div
             className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium ${
-              localSettings.telegramConnected
+              telegramConnected
                 ? 'bg-emerald-500/10 text-emerald-500'
                 : 'bg-red-500/10 text-red-500'
             }`}
           >
             <div
               className={`w-2 h-2 rounded-full ${
-                localSettings.telegramConnected
+                telegramConnected
                   ? 'bg-emerald-500'
                   : 'bg-red-500'
               }`}
             />
             <span>
-              {localSettings.telegramConnected
-                ? 'Connected'
+              {telegramConnected
+                ? `Connected (${totalChannels} channels)`
                 : 'Not Connected'}
             </span>
           </div>
@@ -146,26 +175,21 @@ export default function Settings() {
 
         <div className="space-y-4">
           <p className="text-sm text-zinc-400">
-            {localSettings.telegramConnected
-              ? 'Your Telegram account is connected and monitoring channels.'
+            {telegramConnected
+              ? `Your Telegram account is connected and monitoring ${totalChannels} channels (${channels.length} approved, ${pendingChannels.length} pending).`
               : 'Connect your Telegram account to start monitoring channels. Configure the Telegram API credentials in the backend environment variables.'}
           </p>
           <button
-            onClick={() =>
-              handleChange(
-                'telegramConnected',
-                !localSettings.telegramConnected
-              )
-            }
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              localSettings.telegramConnected
-                ? 'bg-red-500/10 hover:bg-red-500/20 text-red-500'
-                : 'bg-emerald-500 hover:bg-emerald-600 text-white'
-            }`}
+            onClick={handleSync}
+            disabled={syncing}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-500/50 text-white rounded-lg text-sm font-medium transition-colors"
           >
-            {localSettings.telegramConnected
-              ? 'Disconnect'
-              : 'Connect Telegram'}
+            {syncing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            <span>{syncing ? 'Syncing...' : 'Sync Telegram Channels'}</span>
           </button>
         </div>
       </Card>
@@ -189,13 +213,13 @@ export default function Settings() {
               value={anthropicKey}
               onChange={(e) => setAnthropicKey(e.target.value)}
               placeholder={
-                localSettings.anthropicKeySet
+                healthStatus?.anthropic_configured
                   ? 'sk-ant-***...*** (key is set)'
                   : 'Enter your Anthropic API key'
               }
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-zinc-300 placeholder-zinc-600 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20"
             />
-            {localSettings.anthropicKeySet && (
+            {healthStatus?.anthropic_configured && (
               <CheckCircle2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500" />
             )}
           </div>

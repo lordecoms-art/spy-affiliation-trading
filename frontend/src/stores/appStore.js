@@ -56,6 +56,9 @@ const useAppStore = create((set, get) => ({
   },
   settingsLoading: false,
 
+  // Health / Telegram status
+  healthStatus: null,
+
   // Sync state
   syncing: false,
 
@@ -65,7 +68,7 @@ const useAppStore = create((set, get) => ({
   fetchChannels: async () => {
     set({ channelsLoading: true });
     try {
-      const response = await api.get('/channels');
+      const response = await api.get('/channels/');
       const allChannels = response.data?.channels || response.data || [];
       set({
         channels: allChannels.filter((c) => c.status === 'approved'),
@@ -116,7 +119,7 @@ const useAppStore = create((set, get) => ({
     set({ messagesLoading: true });
     try {
       const params = { ...get().messageFilters, ...filters };
-      const response = await api.get('/messages', { params });
+      const response = await api.get('/messages/', { params });
       set({
         messages: response.data?.messages || response.data || [],
         messagesLoading: false,
@@ -191,7 +194,7 @@ const useAppStore = create((set, get) => ({
   fetchAnalysis: async (filters = {}) => {
     set({ analysisLoading: true });
     try {
-      const response = await api.get('/analysis', { params: filters });
+      const response = await api.get('/analysis/', { params: filters });
       set({
         analysisData: response.data?.results || response.data || [],
         analysisLoading: false,
@@ -273,6 +276,19 @@ const useAppStore = create((set, get) => ({
       console.error('Failed to sync Telegram:', error);
       set({ syncing: false });
       throw error;
+    }
+  },
+
+  // Fetch health status
+  fetchHealthStatus: async () => {
+    try {
+      const baseUrl = api.defaults.baseURL.replace(/\/api\/?$/, '');
+      const response = await api.get(`${baseUrl}/health`);
+      set({ healthStatus: response.data });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch health status:', error);
+      set({ healthStatus: null });
     }
   },
 

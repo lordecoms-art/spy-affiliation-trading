@@ -43,6 +43,7 @@ export default function Dashboard() {
   const {
     globalStats,
     channels,
+    pendingChannels,
     messages,
     fetchStats,
     fetchChannels,
@@ -68,43 +69,31 @@ export default function Dashboard() {
     .sort((a, b) => (b.score || 0) - (a.score || 0))
     .slice(0, 5);
 
+  const formatTimeAgo = (dateStr) => {
+    if (!dateStr) return '';
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    if (hours < 1) return 'Just now';
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+  };
+
   const recentActivity = [
-    {
-      id: 1,
-      action: 'New channel discovered',
-      detail: 'Whale Tracker BTC via Telegram sync',
-      time: '2 hours ago',
-      type: 'discovery',
-    },
-    {
-      id: 2,
-      action: 'Analysis completed',
-      detail: '24 messages from Crypto Signals Pro',
-      time: '3 hours ago',
-      type: 'analysis',
-    },
-    {
-      id: 3,
-      action: 'Channel approved',
-      detail: 'DeFi Alpha Hunters added to tracking',
-      time: '5 hours ago',
+    ...channels.slice(0, 3).map((ch) => ({
+      id: `approved-${ch.id}`,
+      action: 'Channel tracked',
+      detail: `${ch.title} is being monitored`,
+      time: formatTimeAgo(ch.approved_at || ch.created_at),
       type: 'approved',
-    },
-    {
-      id: 4,
-      action: 'Voice transcribed',
-      detail: '12 voice messages processed',
-      time: '6 hours ago',
-      type: 'voice',
-    },
-    {
-      id: 5,
-      action: 'Insight generated',
-      detail: 'New trending pattern: urgency hooks +15%',
-      time: '8 hours ago',
-      type: 'insight',
-    },
-  ];
+    })),
+    ...pendingChannels.slice(0, 2).map((ch) => ({
+      id: `pending-${ch.id}`,
+      action: 'New channel discovered',
+      detail: `${ch.title} via Telegram sync`,
+      time: formatTimeAgo(ch.discovered_at || ch.created_at),
+      type: 'discovery',
+    })),
+  ].slice(0, 5);
 
   return (
     <div className="space-y-6">
@@ -248,6 +237,11 @@ export default function Dashboard() {
           </h3>
           <Clock className="w-5 h-5 text-zinc-500" />
         </div>
+        {recentActivity.length === 0 ? (
+          <div className="flex items-center justify-center py-8 text-zinc-500">
+            <p>No recent activity yet. Sync Telegram channels to get started.</p>
+          </div>
+        ) : (
         <div className="space-y-4">
           {recentActivity.map((activity) => (
             <div
@@ -281,6 +275,7 @@ export default function Dashboard() {
             </div>
           ))}
         </div>
+        )}
       </Card>
     </div>
   );
