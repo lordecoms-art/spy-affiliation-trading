@@ -540,6 +540,14 @@ def get_channels_growth(
                 if growth_30d == 0 and growth_30d_pct == 0.0:
                     growth_30d, growth_30d_pct = _growth_vs(oldest)
 
+        # Average daily gain/loss over 30 days
+        avg_daily_30d = round(growth_30d / 30) if growth_30d != 0 else 0
+
+        # Date of first snapshot for this channel
+        first_snapshot_date = None
+        if snapshots:
+            first_snapshot_date = snapshots[-1].recorded_at.strftime("%Y-%m-%d")
+
         results.append({
             "channel_id": channel.id,
             "title": channel.title,
@@ -552,8 +560,10 @@ def get_channels_growth(
             "growth_7d_pct": growth_7d_pct,
             "growth_30d": growth_30d,
             "growth_30d_pct": growth_30d_pct,
+            "avg_daily_30d": avg_daily_30d,
             "sparkline": sparkline,
             "snapshots_count": len(snapshots),
+            "first_snapshot": first_snapshot_date,
         })
 
     return results

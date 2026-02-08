@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Filter, Radio, Loader2 } from 'lucide-react';
+import { TrendingUp, TrendingDown, Filter, Radio, Loader2, Info } from 'lucide-react';
 import DataTable from '../components/DataTable';
 import Badge from '../components/Badge';
 import useAppStore from '../stores/appStore';
@@ -128,6 +128,22 @@ export default function ChannelsTracking() {
       },
     },
     {
+      key: 'avg_daily_30d',
+      label: 'Avg/jour',
+      render: (_value, row) => {
+        const g = growthData[row.id];
+        if (!g || g.snapshots_count < 2) return <span className="text-zinc-500 text-xs italic">En attente</span>;
+        const v = g.avg_daily_30d || 0;
+        if (v === 0) return <span className="text-zinc-500 text-xs italic">0/j</span>;
+        const isPositive = v >= 0;
+        return (
+          <span className={`font-medium text-sm ${isPositive ? 'text-emerald-500' : 'text-red-500'}`}>
+            {isPositive ? '+' : ''}{v}/j
+          </span>
+        );
+      },
+    },
+    {
       key: 'avg_engagement',
       label: 'Avg Engagement',
       render: (value) => {
@@ -152,6 +168,14 @@ export default function ChannelsTracking() {
       sortable: false,
     },
   ];
+
+  // Find earliest first_snapshot date across all channels
+  const firstSnapshotDate = Object.values(growthData)
+    .map((g) => g.first_snapshot)
+    .filter(Boolean)
+    .sort()[0];
+
+  const maxSnapshots = Math.max(0, ...Object.values(growthData).map((g) => g.snapshots_count || 0));
 
   return (
     <div className="space-y-6">
@@ -178,6 +202,21 @@ export default function ChannelsTracking() {
           </select>
         </div>
       </div>
+
+      {/* Data freshness notice */}
+      {firstSnapshotDate && maxSnapshots < 8 && (
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-zinc-800/50 border border-zinc-800">
+          <Info className="w-4 h-4 text-zinc-500 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-zinc-500">
+            Données de croissance disponibles depuis le{' '}
+            <span className="text-zinc-400 font-medium">
+              {new Date(firstSnapshotDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+            </span>
+            . Les tendances 7j et 30j seront précises après suffisamment d'historique
+            ({maxSnapshots} snapshot{maxSnapshots > 1 ? 's' : ''} collecté{maxSnapshots > 1 ? 's' : ''}).
+          </p>
+        </div>
+      )}
 
       {/* Table */}
       <DataTable
