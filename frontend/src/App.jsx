@@ -10,6 +10,7 @@ import SwipeFile from './pages/SwipeFile';
 import Comparator from './pages/Comparator';
 import Generator from './pages/Generator';
 import ChannelPersona from './pages/ChannelPersona';
+import ChannelPreview from './pages/ChannelPreview';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/channels" element={<ChannelsTracking />} />
           <Route path="/channels/:id" element={<ChannelDetail />} />
           <Route path="/channels/:id/persona" element={<ChannelPersona />} />
+          <Route path="/channels/:id/preview" element={<ChannelPreview />} />
           <Route path="/analysis" element={<MessagesAnalysis />} />
           <Route path="/insights" element={<Insights />} />
           <Route path="/swipe-file" element={<SwipeFile />} />

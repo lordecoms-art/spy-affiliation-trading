@@ -14,6 +14,7 @@ import {
   Loader2,
   Sparkles,
   RefreshCw,
+  Smartphone,
 } from 'lucide-react';
 import {
   BarChart,
@@ -27,6 +28,7 @@ import {
 import Card from '../components/Card';
 import Badge from '../components/Badge';
 import api from '../utils/api';
+import { MiniPhonePreview } from './ChannelPreview';
 
 const ChartTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
@@ -144,15 +146,26 @@ export default function ChannelPersona() {
   const maxWordCount = Math.max(...(writing_style.recurring_words || []).map(w => w.count), 1);
 
   return (
-    <div className="space-y-6">
+    <div className="flex gap-6">
+      {/* Main content */}
+      <div className="flex-1 min-w-0 space-y-6">
       {/* Back Button */}
-      <button
-        onClick={() => navigate(`/channels/${id}`)}
-        className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
-      >
-        <ArrowLeft className="w-4 h-4" />
-        <span>Back to Channel</span>
-      </button>
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => navigate(`/channels/${id}`)}
+          className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to Channel</span>
+        </button>
+        <button
+          onClick={() => navigate(`/channels/${id}/preview`)}
+          className="inline-flex items-center gap-2 px-3 py-1.5 text-sm text-blue-400 hover:text-blue-300 border border-blue-500/30 rounded-lg hover:bg-blue-500/10 transition-colors"
+        >
+          <Smartphone className="w-4 h-4" />
+          Full Preview
+        </button>
+      </div>
 
       {/* Channel Header */}
       <Card>
@@ -790,6 +803,19 @@ export default function ChannelPersona() {
           </div>
         )}
       </CollapsibleSection>
+      </div>
+
+      {/* Right sidebar: Mini phone preview */}
+      <div className="hidden xl:block w-[310px] flex-shrink-0">
+        <div className="sticky top-6">
+          <h3 className="text-sm font-medium text-zinc-400 mb-3 text-center">Channel Feed</h3>
+          <MiniPhonePreview
+            channelId={id}
+            channelName={channel.title}
+            subscriberCount={channel.subscribers_count}
+          />
+        </div>
+      </div>
     </div>
   );
 }

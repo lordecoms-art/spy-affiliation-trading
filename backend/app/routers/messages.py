@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import exists
+from sqlalchemy import exists, func
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -151,6 +151,83 @@ def get_message(
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
     return message
+
+
+@router.get("/feed/{channel_id}")
+def get_channel_feed(
+    channel_id: int,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Get messages with engagement scores for channel preview feed."""
+    channel = db.query(Channel).filter(Channel.id == channel_id).first()
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+
+    rows = (
+        db.query(
+            Message.id,
+            Message.telegram_message_id,
+            Message.content_type,
+            Message.text_content,
+            Message.voice_duration,
+            Message.views_count,
+            Message.forwards_count,
+            Message.replies_count,
+            Message.reactions_count,
+            Message.has_cta,
+            Message.posted_at,
+            MessageAnalysis.engagement_score,
+            MessageAnalysis.hook_type.label("analysis_hook_type"),
+        )
+        .outerjoin(MessageAnalysis, MessageAnalysis.message_id == Message.id)
+        .filter(Message.channel_id == channel_id)
+        .order_by(Message.posted_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    total = (
+        db.query(func.count(Message.id))
+        .filter(Message.channel_id == channel_id)
+        .scalar()
+        or 0
+    )
+
+    messages = []
+    for row in rows:
+        messages.append({
+            "id": row.id,
+            "telegram_message_id": row.telegram_message_id,
+            "content_type": row.content_type,
+            "text_content": row.text_content,
+            "voice_duration": row.voice_duration,
+            "views_count": row.views_count or 0,
+            "forwards_count": row.forwards_count or 0,
+            "replies_count": row.replies_count or 0,
+            "reactions_count": row.reactions_count or 0,
+            "has_cta": row.has_cta,
+            "posted_at": row.posted_at.isoformat() if row.posted_at else None,
+            "engagement_score": float(row.engagement_score) if row.engagement_score is not None else None,
+            "hook_type": row.analysis_hook_type,
+        })
+
+    return {
+        "channel": {
+            "id": channel.id,
+            "title": channel.title,
+            "username": channel.username,
+            "subscribers_count": channel.subscribers_count,
+            "photo_url": getattr(channel, "photo_url", None),
+            "description": channel.description,
+        },
+        "messages": messages,
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+    }
 
 
 @router.post("/scrape/{channel_id}", response_model=ScrapeResultResponse)

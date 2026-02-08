@@ -8,6 +8,7 @@ import {
   BarChart3,
   Loader2,
   UserCircle,
+  Smartphone,
 } from 'lucide-react';
 import {
   LineChart,
@@ -111,6 +112,13 @@ export default function ChannelDetail() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate(`/channels/${id}/preview`)}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              <Smartphone className="w-4 h-4" />
+              Preview Feed
+            </button>
             <button
               onClick={() => navigate(`/channels/${id}/persona`)}
               className="inline-flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-sm font-medium transition-colors"
