@@ -509,24 +509,36 @@ def get_channels_growth(
             # Build sparkline (oldest to newest)
             sparkline = [s.subscribers_count for s in reversed(snapshots)]
 
+            # Helper: compute growth vs a reference snapshot
+            def _growth_vs(ref_snap):
+                ref_subs = ref_snap.subscribers_count or 0
+                diff = current_subs - ref_subs
+                pct = round(diff / ref_subs * 100, 2) if ref_subs > 0 else 0.0
+                return diff, pct
+
             # Find snapshots closest to 1 day, 7 days, 30 days ago
-            for s in snapshots:
+            for s in snapshots[1:]:  # skip the latest (index 0)
                 age = (now - s.recorded_at).total_seconds() / 86400  # days
 
                 if age >= 0.8 and growth_24h == 0:
-                    growth_24h = current_subs - (s.subscribers_count or 0)
-                    if s.subscribers_count and s.subscribers_count > 0:
-                        growth_24h_pct = round(growth_24h / s.subscribers_count * 100, 2)
+                    growth_24h, growth_24h_pct = _growth_vs(s)
 
                 if age >= 6.5 and growth_7d == 0:
-                    growth_7d = current_subs - (s.subscribers_count or 0)
-                    if s.subscribers_count and s.subscribers_count > 0:
-                        growth_7d_pct = round(growth_7d / s.subscribers_count * 100, 2)
+                    growth_7d, growth_7d_pct = _growth_vs(s)
 
                 if age >= 29 and growth_30d == 0:
-                    growth_30d = current_subs - (s.subscribers_count or 0)
-                    if s.subscribers_count and s.subscribers_count > 0:
-                        growth_30d_pct = round(growth_30d / s.subscribers_count * 100, 2)
+                    growth_30d, growth_30d_pct = _growth_vs(s)
+
+            # If we have >=2 snapshots but no time-based match yet,
+            # use oldest available as reference for all missing periods
+            if len(snapshots) >= 2:
+                oldest = snapshots[-1]
+                if growth_24h == 0 and growth_24h_pct == 0.0:
+                    growth_24h, growth_24h_pct = _growth_vs(oldest)
+                if growth_7d == 0 and growth_7d_pct == 0.0:
+                    growth_7d, growth_7d_pct = _growth_vs(oldest)
+                if growth_30d == 0 and growth_30d_pct == 0.0:
+                    growth_30d, growth_30d_pct = _growth_vs(oldest)
 
         results.append({
             "channel_id": channel.id,
