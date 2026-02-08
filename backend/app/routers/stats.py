@@ -698,3 +698,29 @@ async def _snapshot_channels_async(scraper, channel_data: list) -> None:
         db.rollback()
     finally:
         db.close()
+
+
+@router.delete("/snapshots/before")
+def delete_snapshots_before(
+    date: str = Query(..., description="Delete snapshots before this date (YYYY-MM-DD)"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Delete all channel_stats snapshots recorded before the given date.
+
+    Used to clean up stale snapshots from before live Telegram tracking was enabled.
+    """
+    try:
+        cutoff = datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format, use YYYY-MM-DD")
+
+    count = (
+        db.query(ChannelStats)
+        .filter(ChannelStats.recorded_at < cutoff)
+        .count()
+    )
+    db.query(ChannelStats).filter(ChannelStats.recorded_at < cutoff).delete()
+    db.commit()
+
+    logger.info(f"Deleted {count} snapshots before {date}")
+    return {"deleted": count, "before": date}
