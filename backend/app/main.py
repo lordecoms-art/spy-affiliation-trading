@@ -49,15 +49,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}")
 
-    # Add subscribers_count column if missing (no Alembic in this project)
+    # Schema migrations (no Alembic in this project)
     from sqlalchemy import text
     try:
         with engine.connect() as conn:
-            conn.execute(text(
-                "ALTER TABLE channels ADD COLUMN IF NOT EXISTS subscribers_count INTEGER DEFAULT 0 NOT NULL"
-            ))
+            migrations = [
+                "ALTER TABLE channels ADD COLUMN IF NOT EXISTS subscribers_count INTEGER DEFAULT 0 NOT NULL",
+                "ALTER TABLE channel_stats ADD COLUMN IF NOT EXISTS posts_count INTEGER DEFAULT 0 NOT NULL",
+                "ALTER TABLE channel_stats ADD COLUMN IF NOT EXISTS avg_views DOUBLE PRECISION DEFAULT 0 NOT NULL",
+                "ALTER TABLE channel_stats ADD COLUMN IF NOT EXISTS photos_count INTEGER DEFAULT 0 NOT NULL",
+                "ALTER TABLE channel_stats ADD COLUMN IF NOT EXISTS videos_count INTEGER DEFAULT 0 NOT NULL",
+                "ALTER TABLE channel_stats ADD COLUMN IF NOT EXISTS files_count INTEGER DEFAULT 0 NOT NULL",
+                "ALTER TABLE channel_stats ADD COLUMN IF NOT EXISTS links_count INTEGER DEFAULT 0 NOT NULL",
+            ]
+            for sql in migrations:
+                conn.execute(text(sql))
             conn.commit()
-            logger.info("Schema migration: subscribers_count column ensured.")
+            logger.info("Schema migrations applied successfully.")
     except Exception as e:
         logger.warning(f"Schema migration note: {e}")
 

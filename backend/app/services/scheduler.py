@@ -368,7 +368,7 @@ def start_scheduler() -> None:
     # Record channel stats daily at configured hour
     scheduler.add_job(
         record_channel_stats,
-        trigger=CronTrigger(hour=settings.STATS_SNAPSHOT_HOUR),
+        trigger=CronTrigger(hour=settings.STATS_SNAPSHOT_HOUR, minute=settings.STATS_SNAPSHOT_MINUTE),
         id="record_channel_stats",
         name="Record daily channel statistics",
         replace_existing=True,
@@ -378,7 +378,7 @@ def start_scheduler() -> None:
     logger.info(
         f"[Scheduler] Started with scrape interval "
         f"{settings.SCRAPE_INTERVAL_MINUTES}min, "
-        f"stats snapshot at {settings.STATS_SNAPSHOT_HOUR}:00 UTC."
+        f"stats snapshot at {settings.STATS_SNAPSHOT_HOUR}:{settings.STATS_SNAPSHOT_MINUTE:02d} UTC."
     )
 
 

@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     SCRAPE_INTERVAL_MINUTES: int = 30
     MAX_MESSAGES_PER_SCRAPE: int = 100
-    STATS_SNAPSHOT_HOUR: int = 3
+    STATS_SNAPSHOT_HOUR: int = 23
+    STATS_SNAPSHOT_MINUTE: int = 1
     FRONTEND_URL: str = "http://localhost:5173"
 
     class Config:

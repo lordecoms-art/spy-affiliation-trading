@@ -8,7 +8,7 @@ import api from '../utils/api';
 
 function GrowthCell({ absolute, pct }) {
   if (absolute === 0 && pct === 0) {
-    return <span className="text-zinc-600 text-sm">--</span>;
+    return <span className="text-zinc-500 text-xs italic">0</span>;
   }
   const isPositive = absolute >= 0;
   return (
@@ -105,7 +105,7 @@ export default function ChannelsTracking() {
       label: '+/- 24h',
       render: (_value, row) => {
         const g = growthData[row.id];
-        if (!g || g.snapshots_count < 2) return <span className="text-zinc-600 text-sm">--</span>;
+        if (!g || g.snapshots_count < 2) return <span className="text-zinc-500 text-xs italic">En attente</span>;
         return <GrowthCell absolute={g.growth_24h} pct={g.growth_24h_pct} />;
       },
     },
@@ -114,7 +114,7 @@ export default function ChannelsTracking() {
       label: '+/- 7d',
       render: (_value, row) => {
         const g = growthData[row.id];
-        if (!g || g.snapshots_count < 2) return <span className="text-zinc-600 text-sm">--</span>;
+        if (!g || g.snapshots_count < 2) return <span className="text-zinc-500 text-xs italic">En attente</span>;
         return <GrowthCell absolute={g.growth_7d} pct={g.growth_7d_pct} />;
       },
     },
@@ -123,7 +123,7 @@ export default function ChannelsTracking() {
       label: '+/- 30d',
       render: (_value, row) => {
         const g = growthData[row.id];
-        if (!g || g.snapshots_count < 2) return <span className="text-zinc-600 text-sm">--</span>;
+        if (!g || g.snapshots_count < 2) return <span className="text-zinc-500 text-xs italic">En attente</span>;
         return <GrowthCell absolute={g.growth_30d} pct={g.growth_30d_pct} />;
       },
     },
