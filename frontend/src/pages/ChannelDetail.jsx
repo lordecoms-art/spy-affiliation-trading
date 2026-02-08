@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -24,6 +24,7 @@ import {
 import Card from '../components/Card';
 import Badge from '../components/Badge';
 import useAppStore from '../stores/appStore';
+import api from '../utils/api';
 
 const ChartTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
@@ -50,9 +51,32 @@ export default function ChannelDetail() {
     fetchChannelStats,
   } = useAppStore();
 
+  const [statsHistory, setStatsHistory] = useState([]);
+  const [growth, setGrowth] = useState(null);
+
   useEffect(() => {
     fetchChannelDetail(id);
     fetchChannelStats(id);
+    // Fetch real stats history for chart
+    api.get(`/stats/channel/${id}`, { params: { limit: 90 } })
+      .then((r) => {
+        const data = (r.data || [])
+          .reverse()
+          .map((s) => ({
+            date: new Date(s.recorded_at).toLocaleDateString([], { day: 'numeric', month: 'short' }),
+            count: s.subscribers_count,
+          }));
+        setStatsHistory(data);
+      })
+      .catch(() => {});
+    // Fetch growth data for this channel
+    api.get('/stats/growth')
+      .then((r) => {
+        const all = r.data || [];
+        const mine = all.find((g) => String(g.channel_id) === String(id));
+        if (mine) setGrowth(mine);
+      })
+      .catch(() => {});
   }, [id, fetchChannelDetail, fetchChannelStats]);
 
   if (channelsLoading || !selectedChannel) {
@@ -65,9 +89,9 @@ export default function ChannelDetail() {
 
   const channel = selectedChannel;
   const subscriberHistory =
-    channel.subscriber_history ||
-    channelStats?.subscriber_history ||
-    [];
+    statsHistory.length > 0
+      ? statsHistory
+      : channel.subscriber_history || channelStats?.subscriber_history || [];
   const recentMessages = channel.recent_messages || [];
   const patterns = channel.patterns || { hook_types: [], cta_types: [] };
 
@@ -180,6 +204,30 @@ export default function ChannelDetail() {
           </div>
         </div>
       </Card>
+
+      {/* Growth Summary Cards */}
+      {growth && growth.snapshots_count >= 2 && (
+        <div className="grid grid-cols-3 gap-4">
+          {[
+            { label: '+/- 24h', abs: growth.growth_24h, pct: growth.growth_24h_pct },
+            { label: '+/- 7 days', abs: growth.growth_7d, pct: growth.growth_7d_pct },
+            { label: '+/- 30 days', abs: growth.growth_30d, pct: growth.growth_30d_pct },
+          ].map((g) => {
+            const isPos = g.abs >= 0;
+            return (
+              <Card key={g.label}>
+                <p className="text-xs text-zinc-500 mb-1">{g.label}</p>
+                <p className={`text-2xl font-bold ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {isPos ? '+' : ''}{g.abs}
+                </p>
+                <p className={`text-sm ${isPos ? 'text-emerald-500/70' : 'text-red-500/70'}`}>
+                  {isPos ? '+' : ''}{g.pct}%
+                </p>
+              </Card>
+            );
+          })}
+        </div>
+      )}
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

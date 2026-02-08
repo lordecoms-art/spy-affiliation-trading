@@ -6,6 +6,7 @@ from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
+from sqlalchemy import func
 
 from app.config import settings
 from app.database import SessionLocal
@@ -165,7 +166,11 @@ async def _scrape_channels_scheduled(scraper, channel_ids: list) -> None:
 
 
 def record_channel_stats() -> None:
-    """Record daily stats snapshot for all approved channels."""
+    """Record daily stats snapshot for all approved channels.
+
+    Fetches LIVE subscriber counts from Telegram via GetFullChannelRequest
+    before recording, so we get actual daily evolution data.
+    """
     logger.info(
         f"[Scheduler] Recording channel stats at {datetime.utcnow()}"
     )
@@ -186,36 +191,138 @@ def record_channel_stats() -> None:
             f"[Scheduler] Recording stats for {len(approved_channels)} channels."
         )
 
-        for channel in approved_channels:
+        channel_data = [
+            (ch.id, ch.title, ch.username, ch.telegram_id)
+            for ch in approved_channels
+        ]
+
+    except Exception as e:
+        logger.error(f"[Scheduler] Error in record_channel_stats: {e}")
+        return
+    finally:
+        db.close()
+
+    # Use a separate Telegram client to fetch live subscriber counts
+    from app.services.telegram_client import TelegramScraper
+
+    src_session = f"{settings.TELEGRAM_SESSION_NAME}.session"
+    bg_name = f"{settings.TELEGRAM_SESSION_NAME}_stats"
+    bg_session = f"{bg_name}.session"
+    try:
+        shutil.copy2(src_session, bg_session)
+    except Exception as e:
+        logger.error(f"[Scheduler] Failed to copy session for stats: {e}")
+        return
+
+    scraper = TelegramScraper(session_name=bg_name)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(
+            _record_stats_with_telegram(scraper, channel_data)
+        )
+    except Exception as e:
+        logger.error(f"[Scheduler] Stats recording failed: {e}")
+    finally:
+        try:
+            loop.run_until_complete(scraper.disconnect())
+        except Exception:
+            pass
+        loop.close()
+
+    logger.info("[Scheduler] Stats recording completed.")
+
+
+async def _record_stats_with_telegram(scraper, channel_data: list) -> None:
+    """Fetch live subscriber counts from Telegram and record daily snapshots."""
+    from datetime import timedelta
+    from sqlalchemy import func
+
+    connected = await scraper.connect()
+    if not connected:
+        logger.error("[Scheduler] Cannot connect to Telegram for stats.")
+        return
+
+    try:
+        await scraper.client.get_dialogs(limit=200)
+    except Exception:
+        pass
+
+    db = SessionLocal()
+    try:
+        for ch_id, ch_title, ch_username, ch_telegram_id in channel_data:
             try:
+                # Fetch LIVE subscriber count from Telegram
+                live_subscribers = 0
+                try:
+                    data = await scraper.enrich_channel(ch_telegram_id)
+                    if data:
+                        live_subscribers = data.get("subscribers_count", 0)
+                        # Update the channel record with fresh count
+                        channel = db.query(Channel).filter(Channel.id == ch_id).first()
+                        if channel and live_subscribers > 0:
+                            channel.subscribers_count = live_subscribers
+                except Exception as e:
+                    logger.warning(
+                        f"[Scheduler] Could not fetch live stats for {ch_title}: {e}"
+                    )
+                    channel = db.query(Channel).filter(Channel.id == ch_id).first()
+                    live_subscribers = channel.subscribers_count if channel else 0
+
+                # Count messages posted in last 24h
+                yesterday = datetime.utcnow() - timedelta(days=1)
+                posts_24h = (
+                    db.query(func.count(Message.id))
+                    .filter(
+                        Message.channel_id == ch_id,
+                        Message.posted_at >= yesterday,
+                    )
+                    .scalar()
+                    or 0
+                )
+
+                # Average views for messages in last 24h
+                avg_views_24h = (
+                    db.query(func.avg(Message.views_count))
+                    .filter(
+                        Message.channel_id == ch_id,
+                        Message.posted_at >= yesterday,
+                    )
+                    .scalar()
+                )
+                avg_views_24h = round(float(avg_views_24h), 2) if avg_views_24h else 0.0
+
+                # Media counts
                 photos_count = (
-                    db.query(Message)
-                    .filter(Message.channel_id == channel.id, Message.content_type == "photo")
-                    .count()
+                    db.query(func.count(Message.id))
+                    .filter(Message.channel_id == ch_id, Message.content_type == "photo")
+                    .scalar() or 0
                 )
                 videos_count = (
-                    db.query(Message)
-                    .filter(Message.channel_id == channel.id, Message.content_type == "video")
-                    .count()
+                    db.query(func.count(Message.id))
+                    .filter(Message.channel_id == ch_id, Message.content_type == "video")
+                    .scalar() or 0
                 )
                 files_count = (
-                    db.query(Message)
-                    .filter(Message.channel_id == channel.id, Message.content_type == "document")
-                    .count()
+                    db.query(func.count(Message.id))
+                    .filter(Message.channel_id == ch_id, Message.content_type == "document")
+                    .scalar() or 0
                 )
                 links_count = (
-                    db.query(Message)
+                    db.query(func.count(Message.id))
                     .filter(
-                        Message.channel_id == channel.id,
+                        Message.channel_id == ch_id,
                         Message.external_links.isnot(None),
                         Message.external_links != "",
                     )
-                    .count()
+                    .scalar() or 0
                 )
 
                 stats = ChannelStats(
-                    channel_id=channel.id,
-                    subscribers_count=channel.subscribers_count or 0,
+                    channel_id=ch_id,
+                    subscribers_count=live_subscribers,
+                    posts_count=posts_24h,
+                    avg_views=avg_views_24h,
                     photos_count=photos_count,
                     videos_count=videos_count,
                     files_count=files_count,
@@ -224,22 +331,23 @@ def record_channel_stats() -> None:
                 )
                 db.add(stats)
                 logger.info(
-                    f"[Scheduler] Stats recorded for channel: {channel.title}"
+                    f"[Scheduler] Stats recorded for {ch_title}: "
+                    f"{live_subscribers} subscribers, {posts_24h} posts/24h"
                 )
             except Exception as e:
                 logger.error(
-                    f"[Scheduler] Error recording stats for {channel.title}: {e}"
+                    f"[Scheduler] Error recording stats for {ch_title}: {e}"
                 )
+
+            await asyncio.sleep(2)
 
         db.commit()
 
     except Exception as e:
-        logger.error(f"[Scheduler] Error in record_channel_stats: {e}")
+        logger.error(f"[Scheduler] Stats recording error: {e}")
         db.rollback()
     finally:
         db.close()
-
-    logger.info("[Scheduler] Stats recording completed.")
 
 
 def start_scheduler() -> None:

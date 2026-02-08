@@ -16,6 +16,8 @@ import {
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -81,18 +83,25 @@ export default function Dashboard() {
 
   const [trends, setTrends] = useState(null);
   const [heatmap, setHeatmap] = useState(null);
+  const [growthData, setGrowthData] = useState([]);
 
   useEffect(() => {
     fetchStats();
     fetchChannels();
     fetchAnalysis();
 
-    // Fetch trends and heatmap
+    // Fetch trends, heatmap, and growth data
     api.get('/stats/trends').then((r) => setTrends(r.data)).catch(() => {});
     api.get('/stats/heatmap').then((r) => setHeatmap(r.data)).catch(() => {});
+    api.get('/stats/growth').then((r) => setGrowthData(r.data || [])).catch(() => {});
   }, [fetchStats, fetchChannels, fetchAnalysis]);
 
-  const topChannels = [...channels]
+  // Top 5 channels by 7d growth (from live growth data, fallback to subscribers)
+  const topGrowthChannels = [...growthData]
+    .sort((a, b) => (b.growth_7d || 0) - (a.growth_7d || 0))
+    .slice(0, 5);
+
+  const topChannelsFallback = [...channels]
     .sort((a, b) => (b.subscribers_count || 0) - (a.subscribers_count || 0))
     .slice(0, 5)
     .map((ch) => ({
@@ -180,17 +189,77 @@ export default function Dashboard() {
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top Channels by Subscribers */}
+        {/* Top Channels by Growth */}
         <Card>
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-semibold text-zinc-100">
-              Top Channels by Subscribers
+              Top Channels by Growth
             </h3>
             <TrendingUp className="w-5 h-5 text-emerald-500" />
           </div>
-          {topChannels.length > 0 ? (
+          {topGrowthChannels.length > 0 ? (
+            <div className="space-y-3">
+              {topGrowthChannels.map((ch, idx) => {
+                const sparkData = (ch.sparkline || []).map((v, i) => ({ i, v }));
+                const formatSubs = (v) => {
+                  if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`;
+                  if (v >= 1000) return `${(v / 1000).toFixed(1)}K`;
+                  return String(v);
+                };
+                const isPositive = (ch.growth_7d || 0) >= 0;
+                return (
+                  <div
+                    key={ch.channel_id}
+                    className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-zinc-800/50 cursor-pointer transition-colors"
+                    onClick={() => navigate(`/channels/${ch.channel_id}`)}
+                  >
+                    <span className="text-xs font-bold text-zinc-500 w-5">
+                      {idx + 1}
+                    </span>
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                      <span className="text-emerald-500 font-bold text-xs">
+                        {(ch.title || '?')[0].toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-zinc-200 truncate">
+                        {ch.title}
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        {formatSubs(ch.subscribers_count)} subscribers
+                      </p>
+                    </div>
+                    {/* Sparkline */}
+                    {sparkData.length > 1 && (
+                      <div className="w-20 h-8 flex-shrink-0">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={sparkData}>
+                            <Line
+                              type="monotone"
+                              dataKey="v"
+                              stroke={isPositive ? '#10b981' : '#ef4444'}
+                              strokeWidth={1.5}
+                              dot={false}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+                    <div className="text-right flex-shrink-0 w-20">
+                      <p className={`text-sm font-bold ${isPositive ? 'text-emerald-500' : 'text-red-500'}`}>
+                        {isPositive ? '+' : ''}{ch.growth_7d}
+                      </p>
+                      <p className="text-[10px] text-zinc-500">
+                        {isPositive ? '+' : ''}{ch.growth_7d_pct}% / 7d
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : topChannelsFallback.length > 0 ? (
             <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={topChannels} layout="vertical">
+              <BarChart data={topChannelsFallback} layout="vertical">
                 <CartesianGrid
                   strokeDasharray="3 3"
                   stroke="#27272a"

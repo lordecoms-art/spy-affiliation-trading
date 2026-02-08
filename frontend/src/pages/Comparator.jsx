@@ -14,6 +14,16 @@ import {
   X,
   Plus,
 } from 'lucide-react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from 'recharts';
 import Card from '../components/Card';
 import Badge from '../components/Badge';
 import api from '../utils/api';
@@ -25,6 +35,24 @@ const CHANNEL_COLORS = [
   { bg: 'bg-cyan-500', text: 'text-cyan-500', light: 'bg-cyan-500/20', border: 'border-cyan-500/30', bar: 'bg-cyan-500' },
   { bg: 'bg-purple-500', text: 'text-purple-500', light: 'bg-purple-500/20', border: 'border-purple-500/30', bar: 'bg-purple-500' },
 ];
+
+const CHART_STROKES = ['#10b981', '#06b6d4', '#a855f7'];
+
+const GrowthTooltip = ({ active, payload, label }) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-3 shadow-xl">
+        <p className="text-xs text-zinc-400 mb-1">{label}</p>
+        {payload.map((entry, i) => (
+          <p key={i} className="text-sm font-medium" style={{ color: entry.color }}>
+            {entry.name}: {entry.value >= 0 ? '+' : ''}{entry.value.toFixed(2)}%
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
 
 function ChannelSelector({ index, selectedId, channels, onChange, onRemove, canRemove }) {
   const [open, setOpen] = useState(false);
@@ -313,12 +341,25 @@ export default function Comparator() {
   const [selectedIds, setSelectedIds] = useState([null, null]);
   const [personas, setPersonas] = useState({});
   const [loading, setLoading] = useState({});
+  const [statsHistory, setStatsHistory] = useState({});
 
   useEffect(() => {
     if (channels.length === 0 && !channelsLoading) {
       fetchChannels();
     }
   }, [channels.length, channelsLoading, fetchChannels]);
+
+  // Fetch stats history when a channel is selected
+  const fetchStatsHistory = async (channelId) => {
+    if (!channelId || statsHistory[channelId]) return;
+    try {
+      const r = await api.get(`/stats/channel/${channelId}`, { params: { limit: 30 } });
+      const data = (r.data || []).reverse();
+      setStatsHistory((prev) => ({ ...prev, [channelId]: data }));
+    } catch {
+      // ignore
+    }
+  };
 
   // Fetch persona when a channel is selected
   const fetchPersona = async (channelId) => {
@@ -338,6 +379,7 @@ export default function Comparator() {
     newIds[index] = channelId;
     setSelectedIds(newIds);
     fetchPersona(channelId);
+    fetchStatsHistory(channelId);
   };
 
   const handleRemoveChannel = (index) => {
@@ -385,6 +427,39 @@ export default function Comparator() {
       .filter((id) => id && personas[id])
       .map((id) => accessor(personas[id]) ?? []);
   };
+
+  // Build normalized growth chart data (percentage growth from day 1)
+  const growthChartData = useMemo(() => {
+    const activeWithStats = activeIds.filter((id) => statsHistory[id] && statsHistory[id].length >= 2);
+    if (activeWithStats.length < 2) return [];
+
+    // Find the channel with fewest data points to use as reference length
+    const minLen = Math.min(...activeWithStats.map((id) => statsHistory[id].length));
+    const data = [];
+
+    for (let i = 0; i < minLen; i++) {
+      const point = {};
+      // Use date from first channel's data
+      const firstStats = statsHistory[activeWithStats[0]][i];
+      point.date = new Date(firstStats.recorded_at).toLocaleDateString([], { day: 'numeric', month: 'short' });
+
+      activeWithStats.forEach((id) => {
+        const history = statsHistory[id];
+        const baseline = history[0].subscribers_count || 1;
+        const current = history[i].subscribers_count || 0;
+        const pctGrowth = ((current - baseline) / baseline) * 100;
+        const ch = channels.find((c) => String(c.id) === String(id));
+        point[`ch_${id}`] = Math.round(pctGrowth * 100) / 100;
+        point[`name_${id}`] = ch?.title || `Channel ${id}`;
+      });
+
+      data.push(point);
+    }
+
+    return data;
+  }, [activeIds, statsHistory, channels]);
+
+  const growthChannelIds = activeIds.filter((id) => statsHistory[id] && statsHistory[id].length >= 2);
 
   return (
     <div className="space-y-6">
@@ -473,6 +548,56 @@ export default function Comparator() {
               </div>
             </div>
           </Card>
+
+          {/* Subscriber Growth Overlay */}
+          {growthChartData.length > 0 && (
+            <Card>
+              <div className="flex items-center gap-2 mb-4">
+                <div className="p-1.5 rounded-lg bg-zinc-800">
+                  <TrendingUp className="w-4 h-4 text-emerald-500" />
+                </div>
+                <h3 className="text-base font-semibold text-zinc-100">Subscriber Growth Comparison</h3>
+                <span className="text-xs text-zinc-500 ml-2">Normalized % growth from first data point</span>
+              </div>
+              <ResponsiveContainer width="100%" height={320}>
+                <LineChart data={growthChartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fill: '#71717a', fontSize: 12 }}
+                    axisLine={{ stroke: '#27272a' }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: '#71717a', fontSize: 12 }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => `${v}%`}
+                  />
+                  <Tooltip content={<GrowthTooltip />} />
+                  <Legend
+                    wrapperStyle={{ paddingTop: 12 }}
+                    formatter={(value) => <span className="text-xs text-zinc-400">{value}</span>}
+                  />
+                  {growthChannelIds.map((id, i) => {
+                    const ch = channels.find((c) => String(c.id) === String(id));
+                    return (
+                      <Line
+                        key={id}
+                        type="monotone"
+                        dataKey={`ch_${id}`}
+                        name={ch?.title || `Channel ${id}`}
+                        stroke={CHART_STROKES[i] || '#71717a'}
+                        strokeWidth={2}
+                        dot={{ fill: CHART_STROKES[i] || '#71717a', r: 3 }}
+                        activeDot={{ r: 5, fill: CHART_STROKES[i] || '#71717a' }}
+                      />
+                    );
+                  })}
+                </LineChart>
+              </ResponsiveContainer>
+            </Card>
+          )}
 
           {/* Publication Rhythm */}
           <Card>

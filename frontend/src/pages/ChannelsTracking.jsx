@@ -1,17 +1,49 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Filter, Radio } from 'lucide-react';
+import { TrendingUp, TrendingDown, Filter, Radio, Loader2 } from 'lucide-react';
 import DataTable from '../components/DataTable';
 import Badge from '../components/Badge';
 import useAppStore from '../stores/appStore';
+import api from '../utils/api';
+
+function GrowthCell({ absolute, pct }) {
+  if (absolute === 0 && pct === 0) {
+    return <span className="text-zinc-600 text-sm">--</span>;
+  }
+  const isPositive = absolute >= 0;
+  return (
+    <div className={`flex items-center gap-1 ${isPositive ? 'text-emerald-500' : 'text-red-500'}`}>
+      {isPositive ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+      <span className="font-medium text-sm">
+        {isPositive ? '+' : ''}{absolute}
+      </span>
+      <span className="text-xs opacity-70">
+        ({isPositive ? '+' : ''}{pct}%)
+      </span>
+    </div>
+  );
+}
 
 export default function ChannelsTracking() {
   const navigate = useNavigate();
   const { channels, channelsLoading, fetchChannels } = useAppStore();
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [growthData, setGrowthData] = useState({});
+  const [growthLoading, setGrowthLoading] = useState(true);
 
   useEffect(() => {
     fetchChannels();
+    api
+      .get('/stats/growth')
+      .then((r) => {
+        const map = {};
+        for (const item of r.data || []) {
+          map[item.channel_id] = item;
+        }
+        setGrowthData(map);
+      })
+      .catch(() => {})
+      .finally(() => setGrowthLoading(false));
   }, [fetchChannels]);
 
   const categories = [
@@ -58,43 +90,42 @@ export default function ChannelsTracking() {
     {
       key: 'subscribers_count',
       label: 'Subscribers',
-      render: (value) => {
-        const v = value || 0;
-        if (v >= 1000000) return <span className="font-medium text-zinc-200">{(v / 1000000).toFixed(1)}M</span>;
-        if (v >= 1000) return <span className="font-medium text-zinc-200">{(v / 1000).toFixed(1)}K</span>;
-        return <span className="font-medium text-zinc-200">{v.toLocaleString()}</span>;
+      render: (value, row) => {
+        const g = growthData[row.id];
+        const v = g?.subscribers_count || value || 0;
+        let display;
+        if (v >= 1000000) display = `${(v / 1000000).toFixed(1)}M`;
+        else if (v >= 1000) display = `${(v / 1000).toFixed(1)}K`;
+        else display = v.toLocaleString();
+        return <span className="font-medium text-zinc-200">{display}</span>;
+      },
+    },
+    {
+      key: 'growth_24h',
+      label: '+/- 24h',
+      render: (_value, row) => {
+        const g = growthData[row.id];
+        if (!g || g.snapshots_count < 2) return <span className="text-zinc-600 text-sm">--</span>;
+        return <GrowthCell absolute={g.growth_24h} pct={g.growth_24h_pct} />;
       },
     },
     {
       key: 'growth_7d',
-      label: 'Growth 7d',
-      render: (value) => {
-        const isPositive = (value || 0) >= 0;
-        return (
-          <div
-            className={`flex items-center gap-1 ${
-              isPositive ? 'text-emerald-500' : 'text-red-500'
-            }`}
-          >
-            {isPositive ? (
-              <TrendingUp className="w-4 h-4" />
-            ) : (
-              <TrendingDown className="w-4 h-4" />
-            )}
-            <span className="font-medium">
-              {isPositive ? '+' : ''}
-              {value || 0}%
-            </span>
-          </div>
-        );
+      label: '+/- 7d',
+      render: (_value, row) => {
+        const g = growthData[row.id];
+        if (!g || g.snapshots_count < 2) return <span className="text-zinc-600 text-sm">--</span>;
+        return <GrowthCell absolute={g.growth_7d} pct={g.growth_7d_pct} />;
       },
     },
     {
-      key: 'messages_per_day',
-      label: 'Msgs/Day',
-      render: (value) => (
-        <span className="text-zinc-300">{value || 0}</span>
-      ),
+      key: 'growth_30d',
+      label: '+/- 30d',
+      render: (_value, row) => {
+        const g = growthData[row.id];
+        if (!g || g.snapshots_count < 2) return <span className="text-zinc-600 text-sm">--</span>;
+        return <GrowthCell absolute={g.growth_30d} pct={g.growth_30d_pct} />;
+      },
     },
     {
       key: 'avg_engagement',
@@ -128,6 +159,9 @@ export default function ChannelsTracking() {
       <div className="flex items-center justify-between">
         <p className="text-sm text-zinc-400">
           {filteredChannels.length} channels being tracked
+          {growthLoading && (
+            <Loader2 className="w-3.5 h-3.5 text-zinc-500 animate-spin inline ml-2" />
+          )}
         </p>
         <div className="flex items-center gap-3">
           <Filter className="w-4 h-4 text-zinc-500" />

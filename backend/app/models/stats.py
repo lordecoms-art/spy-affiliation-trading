@@ -4,6 +4,7 @@ from sqlalchemy import (
     Column,
     Integer,
     BigInteger,
+    Float,
     DateTime,
     ForeignKey,
 )
@@ -22,6 +23,8 @@ class ChannelStats(Base):
         index=True,
     )
     subscribers_count = Column(BigInteger, default=0, nullable=False)
+    posts_count = Column(Integer, default=0, nullable=False)
+    avg_views = Column(Float, default=0, nullable=False)
     photos_count = Column(Integer, default=0, nullable=False)
     videos_count = Column(Integer, default=0, nullable=False)
     files_count = Column(Integer, default=0, nullable=False)

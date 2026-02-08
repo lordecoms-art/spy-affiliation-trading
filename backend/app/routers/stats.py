@@ -1,14 +1,16 @@
 import asyncio
 import logging
-from datetime import datetime
+import shutil
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, extract
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.config import settings
+from app.database import get_db, SessionLocal
 from app.models.channel import Channel
 from app.models.message import Message
 from app.models.stats import ChannelStats
@@ -462,3 +464,215 @@ def get_trends(
         "best_hours": best_hours,
         "channel_summaries": channel_summaries,
     }
+
+
+@router.get("/growth")
+def get_channels_growth(
+    db: Session = Depends(get_db),
+) -> List[dict]:
+    """Get subscriber growth data for all approved channels.
+
+    Returns 24h, 7d, 30d growth (absolute + percentage) and sparkline data.
+    """
+    channels = (
+        db.query(Channel)
+        .filter(Channel.status == "approved")
+        .all()
+    )
+
+    now = datetime.utcnow()
+    results = []
+
+    for channel in channels:
+        # Get last 30 daily snapshots
+        snapshots = (
+            db.query(ChannelStats)
+            .filter(ChannelStats.channel_id == channel.id)
+            .order_by(ChannelStats.recorded_at.desc())
+            .limit(30)
+            .all()
+        )
+
+        current_subs = channel.subscribers_count or 0
+        sparkline = []
+        growth_24h = 0
+        growth_24h_pct = 0.0
+        growth_7d = 0
+        growth_7d_pct = 0.0
+        growth_30d = 0
+        growth_30d_pct = 0.0
+
+        if snapshots:
+            # Latest snapshot is the most recent
+            current_subs = snapshots[0].subscribers_count or current_subs
+
+            # Build sparkline (oldest to newest)
+            sparkline = [s.subscribers_count for s in reversed(snapshots)]
+
+            # Find snapshots closest to 1 day, 7 days, 30 days ago
+            for s in snapshots:
+                age = (now - s.recorded_at).total_seconds() / 86400  # days
+
+                if age >= 0.8 and growth_24h == 0:
+                    growth_24h = current_subs - (s.subscribers_count or 0)
+                    if s.subscribers_count and s.subscribers_count > 0:
+                        growth_24h_pct = round(growth_24h / s.subscribers_count * 100, 2)
+
+                if age >= 6.5 and growth_7d == 0:
+                    growth_7d = current_subs - (s.subscribers_count or 0)
+                    if s.subscribers_count and s.subscribers_count > 0:
+                        growth_7d_pct = round(growth_7d / s.subscribers_count * 100, 2)
+
+                if age >= 29 and growth_30d == 0:
+                    growth_30d = current_subs - (s.subscribers_count or 0)
+                    if s.subscribers_count and s.subscribers_count > 0:
+                        growth_30d_pct = round(growth_30d / s.subscribers_count * 100, 2)
+
+        results.append({
+            "channel_id": channel.id,
+            "title": channel.title,
+            "username": channel.username,
+            "photo_url": channel.photo_url,
+            "subscribers_count": current_subs,
+            "growth_24h": growth_24h,
+            "growth_24h_pct": growth_24h_pct,
+            "growth_7d": growth_7d,
+            "growth_7d_pct": growth_7d_pct,
+            "growth_30d": growth_30d,
+            "growth_30d_pct": growth_30d_pct,
+            "sparkline": sparkline,
+            "snapshots_count": len(snapshots),
+        })
+
+    return results
+
+
+@router.post("/snapshot-all")
+def trigger_snapshot_all(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Trigger immediate stats snapshot for ALL approved channels.
+
+    Fetches live subscriber counts from Telegram for each channel.
+    Runs in background to avoid timeout.
+    """
+    approved = (
+        db.query(Channel)
+        .filter(Channel.status == "approved")
+        .all()
+    )
+
+    if not approved:
+        return {"status": "no_channels", "channels_queued": 0}
+
+    channel_data = [
+        (ch.id, ch.title, ch.username, ch.telegram_id)
+        for ch in approved
+    ]
+
+    background_tasks.add_task(_snapshot_all_bg, channel_data)
+
+    return {
+        "status": "started",
+        "channels_queued": len(channel_data),
+    }
+
+
+def _snapshot_all_bg(channel_data: list) -> None:
+    """Background task: snapshot all channels with live Telegram data."""
+    from app.services.telegram_client import TelegramScraper
+
+    src_session = f"{settings.TELEGRAM_SESSION_NAME}.session"
+    bg_name = f"{settings.TELEGRAM_SESSION_NAME}_snap"
+    bg_session = f"{bg_name}.session"
+    try:
+        shutil.copy2(src_session, bg_session)
+    except Exception as e:
+        logger.error(f"Failed to copy session for snapshot: {e}")
+        return
+
+    scraper = TelegramScraper(session_name=bg_name)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(
+            _snapshot_channels_async(scraper, channel_data)
+        )
+    except Exception as e:
+        logger.error(f"Snapshot-all failed: {e}")
+    finally:
+        try:
+            loop.run_until_complete(scraper.disconnect())
+        except Exception:
+            pass
+        loop.close()
+
+    logger.info("Snapshot-all completed.")
+
+
+async def _snapshot_channels_async(scraper, channel_data: list) -> None:
+    """Async: fetch live stats and record snapshot for each channel."""
+    connected = await scraper.connect()
+    if not connected:
+        logger.error("Cannot connect to Telegram for snapshot.")
+        return
+
+    try:
+        await scraper.client.get_dialogs(limit=200)
+    except Exception:
+        pass
+
+    db = SessionLocal()
+    try:
+        for ch_id, ch_title, ch_username, ch_telegram_id in channel_data:
+            try:
+                live_subscribers = 0
+                try:
+                    data = await scraper.enrich_channel(ch_telegram_id)
+                    if data:
+                        live_subscribers = data.get("subscribers_count", 0)
+                        channel = db.query(Channel).filter(Channel.id == ch_id).first()
+                        if channel and live_subscribers > 0:
+                            channel.subscribers_count = live_subscribers
+                except Exception as e:
+                    logger.warning(f"Could not fetch live stats for {ch_title}: {e}")
+                    channel = db.query(Channel).filter(Channel.id == ch_id).first()
+                    live_subscribers = channel.subscribers_count if channel else 0
+
+                # Posts in last 24h
+                yesterday = datetime.utcnow() - timedelta(days=1)
+                posts_24h = (
+                    db.query(func.count(Message.id))
+                    .filter(Message.channel_id == ch_id, Message.posted_at >= yesterday)
+                    .scalar() or 0
+                )
+                avg_views_24h = (
+                    db.query(func.avg(Message.views_count))
+                    .filter(Message.channel_id == ch_id, Message.posted_at >= yesterday)
+                    .scalar()
+                )
+                avg_views_24h = round(float(avg_views_24h), 2) if avg_views_24h else 0.0
+
+                stats = ChannelStats(
+                    channel_id=ch_id,
+                    subscribers_count=live_subscribers,
+                    posts_count=posts_24h,
+                    avg_views=avg_views_24h,
+                    recorded_at=datetime.utcnow(),
+                )
+                db.add(stats)
+                logger.info(
+                    f"Snapshot: {ch_title} = {live_subscribers} subscribers"
+                )
+            except Exception as e:
+                logger.error(f"Snapshot error for {ch_title}: {e}")
+
+            await asyncio.sleep(2)
+
+        db.commit()
+    except Exception as e:
+        logger.error(f"Snapshot-all DB error: {e}")
+        db.rollback()
+    finally:
+        db.close()
