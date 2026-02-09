@@ -63,6 +63,9 @@ class MessageResponse(BaseModel):
     forwards_count: int
     replies_count: int
     reactions_count: int
+    reactions_json: Optional[str] = None
+    is_pinned: bool = False
+    forward_from: Optional[str] = None
     external_links: Optional[str]
     has_cta: bool
     cta_text: Optional[str]
@@ -171,11 +174,15 @@ def get_channel_feed(
             Message.telegram_message_id,
             Message.content_type,
             Message.text_content,
+            Message.media_url,
             Message.voice_duration,
             Message.views_count,
             Message.forwards_count,
             Message.replies_count,
             Message.reactions_count,
+            Message.reactions_json,
+            Message.is_pinned,
+            Message.forward_from,
             Message.has_cta,
             Message.posted_at,
             MessageAnalysis.engagement_score,
@@ -203,11 +210,15 @@ def get_channel_feed(
             "telegram_message_id": row.telegram_message_id,
             "content_type": row.content_type,
             "text_content": row.text_content,
+            "media_url": row.media_url,
             "voice_duration": row.voice_duration,
             "views_count": row.views_count or 0,
             "forwards_count": row.forwards_count or 0,
             "replies_count": row.replies_count or 0,
             "reactions_count": row.reactions_count or 0,
+            "reactions_json": row.reactions_json,
+            "is_pinned": getattr(row, "is_pinned", False),
+            "forward_from": getattr(row, "forward_from", None),
             "has_cta": row.has_cta,
             "posted_at": row.posted_at.isoformat() if row.posted_at else None,
             "engagement_score": float(row.engagement_score) if row.engagement_score is not None else None,
@@ -294,6 +305,10 @@ def scrape_channel_messages(
             existing.forwards_count = msg_data.get("forwards_count", existing.forwards_count)
             existing.replies_count = msg_data.get("replies_count", existing.replies_count)
             existing.reactions_count = msg_data.get("reactions_count", existing.reactions_count)
+            existing.reactions_json = msg_data.get("reactions_json") or existing.reactions_json
+            existing.is_pinned = msg_data.get("is_pinned", existing.is_pinned)
+            existing.forward_from = msg_data.get("forward_from") or existing.forward_from
+            existing.media_url = msg_data.get("media_url") or existing.media_url
             updated_count += 1
         else:
             message = Message(
@@ -307,6 +322,9 @@ def scrape_channel_messages(
                 forwards_count=msg_data.get("forwards_count", 0),
                 replies_count=msg_data.get("replies_count", 0),
                 reactions_count=msg_data.get("reactions_count", 0),
+                reactions_json=msg_data.get("reactions_json"),
+                is_pinned=msg_data.get("is_pinned", False),
+                forward_from=msg_data.get("forward_from"),
                 external_links=msg_data.get("external_links"),
                 has_cta=msg_data.get("has_cta", False),
                 cta_text=msg_data.get("cta_text"),
@@ -526,6 +544,10 @@ async def _scrape_channels_async(
                             existing.forwards_count = msg_data.get("forwards_count", existing.forwards_count)
                             existing.replies_count = msg_data.get("replies_count", existing.replies_count)
                             existing.reactions_count = msg_data.get("reactions_count", existing.reactions_count)
+                            existing.reactions_json = msg_data.get("reactions_json") or existing.reactions_json
+                            existing.is_pinned = msg_data.get("is_pinned", existing.is_pinned)
+                            existing.forward_from = msg_data.get("forward_from") or existing.forward_from
+                            existing.media_url = msg_data.get("media_url") or existing.media_url
                             ch_updated += 1
                         else:
                             message = Message(
@@ -539,6 +561,9 @@ async def _scrape_channels_async(
                                 forwards_count=msg_data.get("forwards_count", 0),
                                 replies_count=msg_data.get("replies_count", 0),
                                 reactions_count=msg_data.get("reactions_count", 0),
+                                reactions_json=msg_data.get("reactions_json"),
+                                is_pinned=msg_data.get("is_pinned", False),
+                                forward_from=msg_data.get("forward_from"),
                                 external_links=msg_data.get("external_links"),
                                 has_cta=msg_data.get("has_cta", False),
                                 cta_text=msg_data.get("cta_text"),

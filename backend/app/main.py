@@ -61,6 +61,9 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE channel_stats ADD COLUMN IF NOT EXISTS videos_count INTEGER DEFAULT 0 NOT NULL",
                 "ALTER TABLE channel_stats ADD COLUMN IF NOT EXISTS files_count INTEGER DEFAULT 0 NOT NULL",
                 "ALTER TABLE channel_stats ADD COLUMN IF NOT EXISTS links_count INTEGER DEFAULT 0 NOT NULL",
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions_json TEXT",
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE NOT NULL",
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS forward_from VARCHAR(500)",
             ]
             for sql in migrations:
                 conn.execute(text(sql))

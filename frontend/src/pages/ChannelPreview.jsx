@@ -4,38 +4,34 @@ import {
   ArrowLeft,
   Eye,
   Forward,
-  MessageCircle,
   ChevronDown,
   Loader2,
   Smartphone,
-  Users,
   Image,
   Mic,
   Video,
   FileText,
-  Heart,
+  Play,
 } from 'lucide-react';
 import api from '../utils/api';
 import useAppStore from '../stores/appStore';
 
 const PAGE_SIZE = 50;
 
-function formatDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  const now = new Date();
-  const diff = now - d;
-  const days = Math.floor(diff / 86400000);
-
-  if (days === 0) {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-  if (days === 1) return 'Yesterday';
-  if (days < 7) {
-    return d.toLocaleDateString([], { weekday: 'short' });
-  }
-  return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
-}
+// Exact Telegram dark mode colors
+const TG = {
+  bg: '#0e1621',
+  bubble: '#182533',
+  header: '#17212b',
+  text: '#ffffff',
+  link: '#6ab2f2',
+  views: '#707579',
+  reactionBg: '#2b3e50',
+  reactionText: '#ffffff',
+  highlight: '#6ec05a',
+  datePill: '#182533',
+  datePillText: '#8b9caf',
+};
 
 function formatTime(dateStr) {
   if (!dateStr) return '';
@@ -94,54 +90,103 @@ function ContentTypeBadge({ type, duration }) {
 function MessageBubble({ message }) {
   const borderClass = getEngagementBorder(message.engagement_score);
   const dot = getEngagementDot(message.engagement_score);
+  const reactions = message.reactions_json ? (() => { try { return JSON.parse(message.reactions_json); } catch { return []; } })() : [];
+  const hasMedia = message.media_url && (message.content_type === 'photo' || message.content_type === 'video');
 
   return (
-    <div className={`rounded-xl px-3.5 py-2.5 max-w-full ${borderClass}`} style={{ backgroundColor: '#1e2c3a' }}>
-      {/* Media placeholder */}
-      {message.content_type && message.content_type !== 'text' && (
-        <ContentTypeBadge type={message.content_type} duration={message.voice_duration} />
-      )}
-
-      {/* Message text */}
-      {message.text_content ? (
-        <p className="text-[13px] leading-[1.4] text-zinc-100 whitespace-pre-wrap break-words">
-          {message.text_content}
-        </p>
-      ) : (
-        <p className="text-[13px] text-zinc-500 italic">
-          {message.content_type === 'photo'
-            ? '[Photo]'
-            : message.content_type === 'video'
-            ? '[Video]'
-            : message.content_type === 'voice'
-            ? `[Voice ${message.voice_duration ? `${Math.floor(message.voice_duration / 60)}:${String(message.voice_duration % 60).padStart(2, '0')}` : ''}]`
-            : '[Media]'}
-        </p>
-      )}
-
-      {/* Bottom row: time + stats */}
-      <div className="flex items-center justify-end gap-2.5 mt-1.5">
-        {dot}
-        {message.engagement_score != null && (
-          <span className="text-[10px] text-zinc-500">{message.engagement_score.toFixed(1)}/10</span>
-        )}
-        <div className="flex items-center gap-1 text-zinc-500">
-          <Eye className="w-3 h-3" />
-          <span className="text-[10px]">{formatNumber(message.views_count)}</span>
+    <div className={`rounded-xl max-w-full overflow-hidden ${borderClass}`} style={{ backgroundColor: TG.bubble }}>
+      {/* Forward header */}
+      {message.forward_from && (
+        <div className="px-3.5 pt-2.5 pb-1">
+          <div style={{ borderLeft: `2px solid ${TG.link}`, paddingLeft: '8px' }}>
+            <p className="text-[11px] font-medium" style={{ color: TG.link }}>
+              Forwarded from
+            </p>
+            <p className="text-[12px] font-semibold" style={{ color: TG.link }}>
+              {message.forward_from}
+            </p>
+          </div>
         </div>
-        {message.forwards_count > 0 && (
-          <div className="flex items-center gap-1 text-zinc-500">
-            <Forward className="w-3 h-3" />
-            <span className="text-[10px]">{formatNumber(message.forwards_count)}</span>
+      )}
+
+      {/* Media thumbnail */}
+      {hasMedia ? (
+        <div className="relative">
+          <img
+            src={message.media_url}
+            alt=""
+            className="w-full object-cover"
+            style={{ maxHeight: '220px', minHeight: '80px' }}
+            loading="lazy"
+          />
+          {message.content_type === 'video' && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+                <Play className="w-5 h-5 text-white ml-0.5" fill="white" />
+              </div>
+            </div>
+          )}
+        </div>
+      ) : message.content_type && message.content_type !== 'text' && !message.text_content ? (
+        <div className="px-3.5 pt-2.5">
+          <ContentTypeBadge type={message.content_type} duration={message.voice_duration} />
+        </div>
+      ) : null}
+
+      {/* Text + meta area */}
+      <div className="px-3.5 py-2">
+        {/* Badge for media+text combo (no thumbnail available) */}
+        {message.content_type && message.content_type !== 'text' && !hasMedia && message.text_content && (
+          <ContentTypeBadge type={message.content_type} duration={message.voice_duration} />
+        )}
+
+        {/* Message text */}
+        {message.text_content && (
+          <p
+            className="text-[13px] leading-[1.4] whitespace-pre-wrap break-words"
+            style={{ color: TG.text }}
+          >
+            {message.text_content}
+          </p>
+        )}
+
+        {/* Reaction pills */}
+        {reactions.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {reactions.map((r, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px]"
+                style={{ backgroundColor: TG.reactionBg, color: TG.reactionText }}
+              >
+                {r.emoji} {formatNumber(r.count)}
+              </span>
+            ))}
           </div>
         )}
-        {message.reactions_count > 0 && (
-          <div className="flex items-center gap-1 text-zinc-500">
-            <Heart className="w-3 h-3" />
-            <span className="text-[10px]">{formatNumber(message.reactions_count)}</span>
+
+        {/* Bottom row: engagement + views + time */}
+        <div className="flex items-center justify-end gap-2 mt-1.5">
+          {dot}
+          {message.engagement_score != null && (
+            <span className="text-[10px]" style={{ color: TG.views }}>
+              {message.engagement_score.toFixed(1)}/10
+            </span>
+          )}
+          <div className="flex items-center gap-1" style={{ color: TG.views }}>
+            <Eye className="w-3 h-3" />
+            <span className="text-[10px]">{formatNumber(message.views_count)}</span>
           </div>
-        )}
-        <span className="text-[10px] text-zinc-500">{formatTime(message.posted_at)}</span>
+          {message.forwards_count > 0 && (
+            <div className="flex items-center gap-1" style={{ color: TG.views }}>
+              <Forward className="w-3 h-3" />
+              <span className="text-[10px]">{formatNumber(message.forwards_count)}</span>
+            </div>
+          )}
+          <span className="text-[10px]" style={{ color: TG.views }}>
+            {formatTime(message.posted_at)}
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -152,7 +197,7 @@ function DateSeparator({ date }) {
     <div className="flex items-center justify-center my-3">
       <span
         className="px-3 py-1 rounded-full text-[11px] font-medium"
-        style={{ backgroundColor: '#1e2c3a80', color: '#8b9caf' }}
+        style={{ backgroundColor: TG.datePill, color: TG.datePillText }}
       >
         {new Date(date).toLocaleDateString([], {
           day: 'numeric',
@@ -164,15 +209,36 @@ function DateSeparator({ date }) {
   );
 }
 
-function PhoneMockup({ children, channelName, subscriberCount, onSwitchChannel, channels, currentChannelId, mini = false }) {
+function PinnedBanner({ message }) {
+  if (!message) return null;
+  const text = message.text_content
+    ? message.text_content.substring(0, 60) + (message.text_content.length > 60 ? '...' : '')
+    : '[Media]';
+
+  return (
+    <div
+      className="relative z-20 flex items-center gap-2 px-3 py-2"
+      style={{ backgroundColor: TG.header, borderBottom: `1px solid ${TG.bg}` }}
+    >
+      <span className="text-sm flex-shrink-0">📌</span>
+      <div className="flex-1 min-w-0" style={{ borderLeft: `2px solid ${TG.link}`, paddingLeft: '8px' }}>
+        <p className="text-[10px] font-medium" style={{ color: TG.link }}>Pinned Message</p>
+        <p className="text-[11px] truncate" style={{ color: TG.text }}>{text}</p>
+      </div>
+    </div>
+  );
+}
+
+function PhoneMockup({ children, channelName, subscriberCount, photoUrl, pinnedMessage, onSwitchChannel, channels, currentChannelId, mini = false }) {
   const frameWidth = mini ? 'w-[280px]' : 'w-[375px]';
   const frameHeight = mini ? 'h-[500px]' : 'h-[740px]';
+  const hasPinned = !mini && pinnedMessage;
 
   return (
     <div className={`relative ${frameWidth} ${frameHeight} mx-auto`}>
       {/* Phone outer frame */}
       <div
-        className={`absolute inset-0 rounded-[40px] shadow-2xl ${mini ? 'rounded-[30px]' : ''}`}
+        className={`absolute inset-0 shadow-2xl ${mini ? 'rounded-[30px]' : 'rounded-[40px]'}`}
         style={{
           background: 'linear-gradient(145deg, #2a2a2e, #1a1a1e)',
           padding: mini ? '8px' : '12px',
@@ -183,7 +249,7 @@ function PhoneMockup({ children, channelName, subscriberCount, onSwitchChannel, 
           className="relative w-full h-full overflow-hidden"
           style={{
             borderRadius: mini ? '22px' : '28px',
-            backgroundColor: '#0e1621',
+            backgroundColor: TG.bg,
           }}
         >
           {/* Notch */}
@@ -191,11 +257,7 @@ function PhoneMockup({ children, channelName, subscriberCount, onSwitchChannel, 
             <div className="absolute top-0 left-1/2 -translate-x-1/2 z-30">
               <div
                 className="rounded-b-2xl"
-                style={{
-                  width: '150px',
-                  height: '28px',
-                  backgroundColor: '#1a1a1e',
-                }}
+                style={{ width: '150px', height: '28px', backgroundColor: '#1a1a1e' }}
               />
             </div>
           )}
@@ -203,10 +265,7 @@ function PhoneMockup({ children, channelName, subscriberCount, onSwitchChannel, 
           {/* Status bar */}
           <div
             className="relative z-20 flex items-center justify-between px-6"
-            style={{
-              height: mini ? '24px' : '44px',
-              backgroundColor: '#17212b',
-            }}
+            style={{ height: mini ? '24px' : '44px', backgroundColor: TG.header }}
           >
             {!mini && (
               <>
@@ -236,24 +295,32 @@ function PhoneMockup({ children, channelName, subscriberCount, onSwitchChannel, 
             className="relative z-20 flex items-center gap-3 px-3"
             style={{
               height: mini ? '44px' : '52px',
-              backgroundColor: '#17212b',
-              borderBottom: '1px solid #0e1621',
+              backgroundColor: TG.header,
+              borderBottom: `1px solid ${TG.bg}`,
             }}
           >
-            {/* Channel avatar */}
-            <div
-              className={`${mini ? 'w-8 h-8' : 'w-10 h-10'} rounded-full flex items-center justify-center flex-shrink-0`}
-              style={{ backgroundColor: '#5b9bd5' }}
-            >
-              <span className={`font-bold text-white ${mini ? 'text-xs' : 'text-sm'}`}>
-                {(channelName || '?')[0].toUpperCase()}
-              </span>
-            </div>
+            {/* Channel avatar - real photo or fallback */}
+            {photoUrl ? (
+              <img
+                src={photoUrl}
+                alt={channelName}
+                className={`${mini ? 'w-8 h-8' : 'w-10 h-10'} rounded-full object-cover flex-shrink-0`}
+              />
+            ) : (
+              <div
+                className={`${mini ? 'w-8 h-8' : 'w-10 h-10'} rounded-full flex items-center justify-center flex-shrink-0`}
+                style={{ backgroundColor: '#5b9bd5' }}
+              >
+                <span className={`font-bold text-white ${mini ? 'text-xs' : 'text-sm'}`}>
+                  {(channelName || '?')[0].toUpperCase()}
+                </span>
+              </div>
+            )}
 
             {/* Channel info */}
             <div className="flex-1 min-w-0">
               <p className={`font-semibold text-white truncate ${mini ? 'text-xs' : 'text-sm'}`}>{channelName}</p>
-              <p className={`text-zinc-400 ${mini ? 'text-[10px]' : 'text-xs'}`}>
+              <p className={`${mini ? 'text-[10px]' : 'text-xs'}`} style={{ color: TG.views }}>
                 {subscriberCount ? `${formatNumber(subscriberCount)} subscribers` : 'channel'}
               </p>
             </div>
@@ -270,8 +337,14 @@ function PhoneMockup({ children, channelName, subscriberCount, onSwitchChannel, 
             )}
           </div>
 
+          {/* Pinned message banner */}
+          {hasPinned && <PinnedBanner message={pinnedMessage} />}
+
           {/* Content area */}
-          <div className="relative z-10 flex-1 overflow-hidden" style={{ height: `calc(100% - ${mini ? '68px' : '96px'})` }}>
+          <div
+            className="relative z-10 flex-1 overflow-hidden"
+            style={{ height: `calc(100% - ${mini ? '68px' : hasPinned ? '132px' : '96px'})` }}
+          >
             {children}
           </div>
         </div>
@@ -280,48 +353,10 @@ function PhoneMockup({ children, channelName, subscriberCount, onSwitchChannel, 
       {/* Side buttons */}
       {!mini && (
         <>
-          {/* Volume buttons */}
-          <div
-            className="absolute rounded-r-sm"
-            style={{
-              left: '-2px',
-              top: '120px',
-              width: '3px',
-              height: '28px',
-              backgroundColor: '#333',
-            }}
-          />
-          <div
-            className="absolute rounded-r-sm"
-            style={{
-              left: '-2px',
-              top: '160px',
-              width: '3px',
-              height: '48px',
-              backgroundColor: '#333',
-            }}
-          />
-          <div
-            className="absolute rounded-r-sm"
-            style={{
-              left: '-2px',
-              top: '218px',
-              width: '3px',
-              height: '48px',
-              backgroundColor: '#333',
-            }}
-          />
-          {/* Power button */}
-          <div
-            className="absolute rounded-l-sm"
-            style={{
-              right: '-2px',
-              top: '170px',
-              width: '3px',
-              height: '60px',
-              backgroundColor: '#333',
-            }}
-          />
+          <div className="absolute rounded-r-sm" style={{ left: '-2px', top: '120px', width: '3px', height: '28px', backgroundColor: '#333' }} />
+          <div className="absolute rounded-r-sm" style={{ left: '-2px', top: '160px', width: '3px', height: '48px', backgroundColor: '#333' }} />
+          <div className="absolute rounded-r-sm" style={{ left: '-2px', top: '218px', width: '3px', height: '48px', backgroundColor: '#333' }} />
+          <div className="absolute rounded-l-sm" style={{ right: '-2px', top: '170px', width: '3px', height: '60px', backgroundColor: '#333' }} />
         </>
       )}
     </div>
@@ -420,6 +455,7 @@ export default function ChannelPreview() {
   }
 
   const channel = feedData?.channel;
+  const pinnedMessage = messages.find((m) => m.is_pinned);
 
   return (
     <div className="space-y-6">
@@ -457,6 +493,8 @@ export default function ChannelPreview() {
             <PhoneMockup
               channelName={channel?.title || 'Channel'}
               subscriberCount={channel?.subscribers_count}
+              photoUrl={channel?.photo_url}
+              pinnedMessage={pinnedMessage}
               channels={channels}
               currentChannelId={Number(id)}
               onSwitchChannel={() => setShowSwitcher(!showSwitcher)}
@@ -465,7 +503,7 @@ export default function ChannelPreview() {
               <div
                 ref={scrollRef}
                 className="h-full overflow-y-auto px-2 py-2 space-y-2"
-                style={{ backgroundColor: '#0e1621' }}
+                style={{ backgroundColor: TG.bg }}
               >
                 {groupedMessages.map((item, i) =>
                   item.type === 'date' ? (
@@ -478,7 +516,7 @@ export default function ChannelPreview() {
                 {/* Loading more indicator */}
                 {loadingMore && (
                   <div className="flex justify-center py-3">
-                    <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
+                    <Loader2 className="w-5 h-5 animate-spin" style={{ color: TG.link }} />
                   </div>
                 )}
 
@@ -487,7 +525,10 @@ export default function ChannelPreview() {
 
                 {!hasMore && messages.length > 0 && (
                   <div className="flex justify-center py-3">
-                    <span className="text-[11px] px-3 py-1 rounded-full" style={{ backgroundColor: '#1e2c3a80', color: '#8b9caf' }}>
+                    <span
+                      className="text-[11px] px-3 py-1 rounded-full"
+                      style={{ backgroundColor: TG.datePill, color: TG.datePillText }}
+                    >
                       Beginning of channel history
                     </span>
                   </div>
@@ -515,11 +556,15 @@ export default function ChannelPreview() {
                           : 'hover:bg-zinc-800'
                       }`}
                     >
-                      <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#5b9bd5' }}>
-                        <span className="text-xs font-bold text-white">
-                          {(ch.title || '?')[0].toUpperCase()}
-                        </span>
-                      </div>
+                      {ch.photo_url ? (
+                        <img src={ch.photo_url} alt={ch.title} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#5b9bd5' }}>
+                          <span className="text-xs font-bold text-white">
+                            {(ch.title || '?')[0].toUpperCase()}
+                          </span>
+                        </div>
+                      )}
                       <div className="flex-1 min-w-0">
                         <p className={`text-sm truncate ${String(ch.id) === String(id) ? 'text-emerald-400 font-medium' : 'text-zinc-300'}`}>
                           {ch.title}
@@ -562,6 +607,7 @@ export default function ChannelPreview() {
 // Export the mini phone component for use in ChannelPersona
 export function MiniPhonePreview({ channelId, channelName, subscriberCount }) {
   const [messages, setMessages] = useState([]);
+  const [channelData, setChannelData] = useState(null);
   const [loading, setLoading] = useState(true);
   const scrollRef = useRef(null);
 
@@ -573,6 +619,7 @@ export function MiniPhonePreview({ channelId, channelName, subscriberCount }) {
           params: { skip: 0, limit: 20 },
         });
         setMessages(response.data.messages || []);
+        setChannelData(response.data.channel || null);
       } catch (error) {
         console.error('Failed to fetch mini feed:', error);
       }
@@ -595,22 +642,23 @@ export function MiniPhonePreview({ channelId, channelName, subscriberCount }) {
 
   return (
     <PhoneMockup
-      channelName={channelName}
-      subscriberCount={subscriberCount}
+      channelName={channelData?.title || channelName}
+      subscriberCount={channelData?.subscribers_count || subscriberCount}
+      photoUrl={channelData?.photo_url}
       mini={true}
     >
       <div
         ref={scrollRef}
         className="h-full overflow-y-auto px-2 py-2 space-y-1.5"
-        style={{ backgroundColor: '#0e1621' }}
+        style={{ backgroundColor: TG.bg }}
       >
         {loading ? (
           <div className="flex items-center justify-center h-full">
-            <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
+            <Loader2 className="w-5 h-5 animate-spin" style={{ color: TG.link }} />
           </div>
         ) : messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
-            <p className="text-xs text-zinc-500">No messages yet</p>
+            <p className="text-xs" style={{ color: TG.views }}>No messages yet</p>
           </div>
         ) : (
           groupedMessages.map((item, i) =>

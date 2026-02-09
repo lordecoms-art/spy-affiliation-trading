@@ -236,9 +236,27 @@ class TelegramScraper:
             replies_count = getattr(msg.replies, "replies", 0) or 0
 
         reactions_count = 0
+        reactions_detail = []
         if hasattr(msg, "reactions") and msg.reactions:
             for result in getattr(msg.reactions, "results", []):
-                reactions_count += getattr(result, "count", 0)
+                count = getattr(result, "count", 0)
+                reactions_count += count
+                reaction = getattr(result, "reaction", None)
+                if reaction and count > 0:
+                    emoticon = getattr(reaction, "emoticon", None)
+                    if emoticon:
+                        reactions_detail.append({"emoji": emoticon, "count": count})
+
+        # Pinned status
+        is_pinned = getattr(msg, "pinned", False)
+
+        # Forward source
+        forward_from = None
+        if msg.fwd_from:
+            fwd = msg.fwd_from
+            forward_from = getattr(fwd, "from_name", None)
+            if not forward_from:
+                forward_from = getattr(fwd, "post_author", None)
 
         return {
             "telegram_message_id": msg.id,
@@ -250,12 +268,32 @@ class TelegramScraper:
             "forwards_count": forwards,
             "replies_count": replies_count,
             "reactions_count": reactions_count,
+            "reactions_json": json.dumps(reactions_detail) if reactions_detail else None,
+            "is_pinned": is_pinned,
+            "forward_from": forward_from,
             "external_links": json.dumps(external_links) if external_links else None,
             "has_cta": has_cta,
             "cta_text": cta_text,
             "cta_link": cta_link,
             "posted_at": msg.date.replace(tzinfo=None) if msg.date else None,
         }
+
+    async def _parse_message_with_media(self, msg) -> Optional[Dict[str, Any]]:
+        """Parse message and download media thumbnail if available."""
+        parsed = self._parse_message(msg)
+        if not parsed:
+            return parsed
+
+        if msg.media and parsed["content_type"] in ("photo", "video"):
+            try:
+                thumb_bytes = await self.client.download_media(msg, file=bytes, thumb=-1)
+                if thumb_bytes and len(thumb_bytes) < 50000:
+                    b64 = base64.b64encode(thumb_bytes).decode()
+                    parsed["media_url"] = f"data:image/jpeg;base64,{b64}"
+            except Exception as e:
+                logger.debug(f"Failed to download thumbnail for msg {msg.id}: {e}")
+
+        return parsed
 
     async def get_channel_messages(
         self,
@@ -287,7 +325,7 @@ class TelegramScraper:
             )
 
             for msg in messages:
-                parsed = self._parse_message(msg)
+                parsed = await self._parse_message_with_media(msg)
                 if parsed:
                     messages_data.append(parsed)
 
@@ -358,7 +396,7 @@ class TelegramScraper:
                 reverse=True,
                 limit=None,
             ):
-                parsed = self._parse_message(msg)
+                parsed = await self._parse_message_with_media(msg)
                 if parsed:
                     batch.append(parsed)
                     total += 1
