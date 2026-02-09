@@ -630,6 +630,57 @@ def generate_ai_persona(
         )
 
 
+def _repair_truncated_json(text: str) -> str:
+    """Attempt to repair truncated JSON by closing open brackets/braces."""
+    # Strip trailing incomplete values (partial strings, etc.)
+    # Find the last complete structure element
+    stack = []
+    in_string = False
+    escape_next = False
+    last_valid = 0
+
+    for i, ch in enumerate(text):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == '\\' and in_string:
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in '{[':
+            stack.append(ch)
+        elif ch == '}' and stack and stack[-1] == '{':
+            stack.pop()
+            last_valid = i + 1
+        elif ch == ']' and stack and stack[-1] == '[':
+            stack.pop()
+            last_valid = i + 1
+        elif ch in ',: \n\r\t':
+            continue
+
+    if not stack:
+        return text  # Already valid
+
+    # Truncate to last valid position, then close remaining brackets
+    repaired = text[:last_valid] if last_valid > 0 else text.rstrip()
+
+    # Remove trailing commas
+    repaired = repaired.rstrip().rstrip(',')
+
+    # Close remaining open brackets/braces in reverse order
+    for bracket in reversed(stack):
+        if bracket == '{':
+            repaired += '}'
+        elif bracket == '[':
+            repaired += ']'
+
+    return repaired
+
+
 @router.post("/{channel_id}/plan")
 def generate_content_plan(
     channel_id: int,
@@ -676,7 +727,7 @@ def generate_content_plan(
 
     prompt = (
         "You are an expert Telegram content strategist. "
-        "Based on the following channel profile, create a detailed "
+        "Based on the following channel profile, create a "
         "30-DAY CONTENT PLAN.\n\n"
         "CHANNEL: {title}\n"
         "SUBSCRIBERS: {subs}\n"
@@ -685,36 +736,26 @@ def generate_content_plan(
         "TOP CTAs: {ctas}\n"
         "AVG ENGAGEMENT: {eng}/10\n\n"
         "TOP PERFORMING MESSAGES:\n{top_msgs}\n\n"
-        "Generate a JSON with:\n"
+        "Generate a JSON with this EXACT structure:\n"
         '{{\n'
-        '  "plan_summary": "overall strategy for the 30 days",\n'
+        '  "plan_summary": "2-3 sentence strategy overview",\n'
         '  "weekly_themes": [\n'
-        '    {{"week": 1, "theme": "...", "focus": "..."}},\n'
-        '    {{"week": 2, "theme": "...", "focus": "..."}},\n'
-        '    {{"week": 3, "theme": "...", "focus": "..."}},\n'
-        '    {{"week": 4, "theme": "...", "focus": "..."}}\n'
+        '    {{"week": 1, "theme": "...", "focus": "..."}}\n'
         '  ],\n'
         '  "daily_plan": [\n'
-        '    {{\n'
-        '      "day": 1,\n'
-        '      "day_of_week": "Monday",\n'
-        '      "posts": [\n'
-        '        {{\n'
-        '          "time": "10:00",\n'
-        '          "type": "text/photo/video",\n'
-        '          "hook_type": "...",\n'
-        '          "topic": "...",\n'
-        '          "content_brief": "brief description of the post content",\n'
-        '          "cta": "call to action if any"\n'
-        '        }}\n'
-        '      ]\n'
-        '    }}\n'
+        '    {{"day": 1, "dow": "Mon", "posts": [\n'
+        '      {{"time": "10:00", "type": "text", "topic": "short topic", "cta": "short cta or null"}}\n'
+        '    ]}}\n'
         '  ],\n'
-        '  "kpis": ["list of KPIs to track"]\n'
+        '  "kpis": ["kpi1", "kpi2"]\n'
         '}}\n\n'
-        "Create the plan for ALL 30 days. Match the channel's posting frequency "
-        "({avg_posts} posts/day avg). Return ONLY JSON, no other text. "
-        "Write in the same language as the channel content."
+        "IMPORTANT RULES:\n"
+        "- Create ALL 30 days. Match {avg_posts} posts/day avg.\n"
+        "- Keep topic to MAX 10 words. Keep cta to MAX 8 words or null.\n"
+        "- Use 3-letter day abbreviations (Mon, Tue, Wed, Thu, Fri, Sat, Sun).\n"
+        "- Return ONLY valid JSON, no markdown, no backticks.\n"
+        "- Write in the same language as the channel content.\n"
+        "- Be concise to fit within response limits."
     ).format(
         title=channel.title,
         subs=channel.subscribers_count,
@@ -728,28 +769,46 @@ def generate_content_plan(
     try:
         response = message_analyzer.client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=8192,
+            max_tokens=16384,
             messages=[{"role": "user", "content": prompt}],
         )
         raw_text = response.content[0].text.strip()
+        stop_reason = response.stop_reason
 
         if raw_text.startswith("```"):
             lines = raw_text.split("\n")
             lines = [l for l in lines if not l.strip().startswith("```")]
             raw_text = "\n".join(lines)
 
+        # If response was truncated (end_turn not reached), try to repair JSON
+        if stop_reason != "end_turn":
+            logger.warning(
+                "Plan generation truncated (stop_reason={}). Attempting JSON repair.".format(stop_reason)
+            )
+            raw_text = _repair_truncated_json(raw_text)
+
         plan = json.loads(raw_text)
         return {"status": "success", "plan": plan}
 
     except json.JSONDecodeError as e:
         logger.error("Failed to parse plan JSON: {}".format(e))
-        return {"status": "partial", "raw_text": raw_text, "error": str(e)}
+        # Try to repair and return whatever we can
+        try:
+            repaired = _repair_truncated_json(raw_text)
+            plan = json.loads(repaired)
+            return {"status": "success", "plan": plan}
+        except Exception:
+            pass
+        return {
+            "status": "error",
+            "error": "La génération a été tronquée. Réessayez.",
+        }
     except Exception as e:
         logger.error("Failed to generate content plan: {}".format(e))
-        raise HTTPException(
-            status_code=500,
-            detail="Plan generation failed: {}".format(str(e)),
-        )
+        return {
+            "status": "error",
+            "error": "Erreur de génération: {}".format(str(e)),
+        }
 
 
 class GenerateContentRequest(BaseModel):

@@ -93,6 +93,7 @@ export default function ChannelPersona() {
   const [aiLoading, setAiLoading] = useState(false);
   const [plan, setPlan] = useState(null);
   const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState(null);
 
   const fetchPersona = useCallback(async () => {
     setLoading(true);
@@ -122,11 +123,19 @@ export default function ChannelPersona() {
 
   const generatePlan = async () => {
     setPlanLoading(true);
+    setPlanError(null);
     try {
       const response = await api.post(`/persona/${id}/plan`, null, { timeout: 180000 });
-      setPlan(response.data.plan || response.data);
+      if (response.data.status === 'error') {
+        setPlanError(response.data.error || 'Erreur de génération, réessayez.');
+      } else if (response.data.plan) {
+        setPlan(response.data.plan);
+      } else {
+        setPlanError('Réponse invalide du serveur. Réessayez.');
+      }
     } catch (error) {
       console.error('Failed to generate plan:', error);
+      setPlanError('Erreur de génération. Vérifiez la connexion et réessayez.');
     }
     setPlanLoading(false);
   };
@@ -734,6 +743,11 @@ export default function ChannelPersona() {
                 </>
               )}
             </button>
+            {planError && (
+              <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm text-center">
+                {planError}
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-6">
@@ -832,7 +846,7 @@ function DayPlanCard({ day }) {
       >
         <div className="flex items-center gap-3">
           <span className="text-sm font-bold text-amber-400 w-10">J{day.day}</span>
-          <span className="text-sm text-zinc-400">{day.day_of_week}</span>
+          <span className="text-sm text-zinc-400">{day.day_of_week || day.dow}</span>
           <span className="text-xs text-zinc-600">{posts.length} post{posts.length > 1 ? 's' : ''}</span>
         </div>
         {expanded ? (
