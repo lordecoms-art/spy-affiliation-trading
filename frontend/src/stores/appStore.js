@@ -271,23 +271,21 @@ const useAppStore = create((set, get) => ({
     }
   },
 
-  // Reject channel
+  // Reject channel (removes from both pending and approved lists)
   rejectChannel: async (channelId) => {
     try {
       await api.post(`/channels/${channelId}/reject`);
-      set((state) => ({
-        pendingChannels: state.pendingChannels.filter(
-          (c) => String(c.id) !== String(channelId)
-        ),
-      }));
     } catch (error) {
       console.error('Failed to reject channel:', error);
-      set((state) => ({
-        pendingChannels: state.pendingChannels.filter(
-          (c) => String(c.id) !== String(channelId)
-        ),
-      }));
     }
+    set((state) => ({
+      pendingChannels: state.pendingChannels.filter(
+        (c) => String(c.id) !== String(channelId)
+      ),
+      channels: state.channels.filter(
+        (c) => String(c.id) !== String(channelId)
+      ),
+    }));
   },
 
   // Sync Telegram

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Filter, Radio, Loader2, Info } from 'lucide-react';
+import { TrendingUp, TrendingDown, Filter, Radio, Loader2, Info, X } from 'lucide-react';
 import DataTable from '../components/DataTable';
 import Badge from '../components/Badge';
 import useAppStore from '../stores/appStore';
@@ -52,10 +52,11 @@ function GrowthCell({ absolute, pct }) {
 
 export default function ChannelsTracking() {
   const navigate = useNavigate();
-  const { channels, channelsLoading, fetchChannels } = useAppStore();
+  const { channels, channelsLoading, fetchChannels, rejectChannel } = useAppStore();
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [growthData, setGrowthData] = useState({});
   const [growthLoading, setGrowthLoading] = useState(true);
+  const [confirmRemove, setConfirmRemove] = useState(null);
 
   useEffect(() => {
     fetchChannels();
@@ -196,6 +197,23 @@ export default function ChannelsTracking() {
         );
       },
     },
+    {
+      key: 'remove',
+      label: '',
+      render: (_value, row) => (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setConfirmRemove(row);
+          }}
+          className="p-1 rounded hover:bg-red-500/20 text-zinc-600 hover:text-red-400 transition-colors"
+          title="Retirer de la liste"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      ),
+      sortable: false,
+    },
   ];
 
   // Find earliest first_snapshot date across all channels
@@ -255,6 +273,40 @@ export default function ChannelsTracking() {
         emptyMessage="No approved channels yet. Discover and approve channels first."
         emptyIcon={Radio}
       />
+
+      {/* Confirmation modal */}
+      {confirmRemove && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-sm w-full mx-4 shadow-2xl">
+            <h3 className="text-lg font-semibold text-zinc-100 mb-2">
+              Retirer ce channel ?
+            </h3>
+            <p className="text-sm text-zinc-400 mb-1">
+              <span className="font-medium text-zinc-200">{confirmRemove.title}</span>
+            </p>
+            <p className="text-xs text-zinc-500 mb-6">
+              Le channel sera retiré de votre liste de suivi. Vous pourrez le ré-approuver plus tard depuis la page Discover.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setConfirmRemove(null)}
+                className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={() => {
+                  rejectChannel(confirmRemove.id);
+                  setConfirmRemove(null);
+                }}
+                className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg font-medium transition-colors"
+              >
+                Retirer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
