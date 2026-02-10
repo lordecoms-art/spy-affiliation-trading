@@ -6,6 +6,32 @@ import Badge from '../components/Badge';
 import useAppStore from '../stores/appStore';
 import api from '../utils/api';
 
+function MiniSparkline({ data }) {
+  if (!data || data.length < 2) return <span className="text-zinc-600 text-xs">—</span>;
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = max - min || 1;
+  const w = 64;
+  const h = 24;
+  const points = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * w;
+    const y = h - ((v - min) / range) * h;
+    return `${x},${y}`;
+  }).join(' ');
+  const isUp = data[data.length - 1] >= data[0];
+  return (
+    <svg width={w} height={h} className="flex-shrink-0">
+      <polyline
+        points={points}
+        fill="none"
+        stroke={isUp ? '#10b981' : '#ef4444'}
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function GrowthCell({ absolute, pct }) {
   if (absolute === 0 && pct === 0) {
     return <span className="text-zinc-500 text-xs italic">0</span>;
@@ -144,13 +170,22 @@ export default function ChannelsTracking() {
       },
     },
     {
+      key: 'sparkline',
+      label: 'Tendance',
+      render: (_value, row) => {
+        const g = growthData[row.id];
+        return <MiniSparkline data={g?.sparkline} />;
+      },
+      sortable: false,
+    },
+    {
       key: 'avg_engagement',
-      label: 'Avg Engagement',
+      label: 'Engagement',
       render: (value) => {
         const v = value || 0;
         return (
           <div className="flex items-center gap-2">
-            <div className="w-16 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+            <div className="w-12 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
               <div
                 className="h-full bg-emerald-500 rounded-full"
                 style={{ width: `${Math.min(v * 10, 100)}%` }}
@@ -160,12 +195,6 @@ export default function ChannelsTracking() {
           </div>
         );
       },
-    },
-    {
-      key: 'status',
-      label: 'Status',
-      render: (value) => <Badge variant={value || 'default'}>{value}</Badge>,
-      sortable: false,
     },
   ];
 

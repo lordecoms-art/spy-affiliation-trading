@@ -206,26 +206,50 @@ export default function ChannelDetail() {
       </Card>
 
       {/* Growth Summary Cards */}
-      {growth && growth.snapshots_count >= 2 && (
+      {growth && (
         <div className="grid grid-cols-3 gap-4">
-          {[
-            { label: '+/- 24h', abs: growth.growth_24h, pct: growth.growth_24h_pct },
-            { label: '+/- 7 days', abs: growth.growth_7d, pct: growth.growth_7d_pct },
-            { label: '+/- 30 days', abs: growth.growth_30d, pct: growth.growth_30d_pct },
-          ].map((g) => {
-            const isPos = g.abs >= 0;
-            return (
-              <Card key={g.label}>
-                <p className="text-xs text-zinc-500 mb-1">{g.label}</p>
-                <p className={`text-2xl font-bold ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {isPos ? '+' : ''}{g.abs}
-                </p>
-                <p className={`text-sm ${isPos ? 'text-emerald-500/70' : 'text-red-500/70'}`}>
-                  {isPos ? '+' : ''}{g.pct}%
-                </p>
+          {growth.snapshots_count >= 2 ? (
+            [
+              { label: '+/- 24h', abs: growth.growth_24h, pct: growth.growth_24h_pct },
+              { label: '+/- 7 jours', abs: growth.growth_7d, pct: growth.growth_7d_pct },
+              { label: '+/- 30 jours', abs: growth.growth_30d, pct: growth.growth_30d_pct },
+            ].map((g) => {
+              const isPos = g.abs >= 0;
+              return (
+                <Card key={g.label}>
+                  <p className="text-xs text-zinc-500 mb-1">{g.label}</p>
+                  <p className={`text-2xl font-bold ${isPos ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {isPos ? '+' : ''}{g.abs.toLocaleString()}
+                  </p>
+                  <p className={`text-sm ${isPos ? 'text-emerald-500/70' : 'text-red-500/70'}`}>
+                    {isPos ? '+' : ''}{g.pct}%
+                  </p>
+                </Card>
+              );
+            })
+          ) : (
+            <>
+              <Card>
+                <p className="text-xs text-zinc-500 mb-1">Snapshots</p>
+                <p className="text-2xl font-bold text-amber-400">{growth.snapshots_count}</p>
+                <p className="text-xs text-zinc-500">collecté{growth.snapshots_count > 1 ? 's' : ''}</p>
               </Card>
-            );
-          })}
+              <Card>
+                <p className="text-xs text-zinc-500 mb-1">Depuis le</p>
+                <p className="text-lg font-bold text-zinc-300">
+                  {growth.first_snapshot
+                    ? new Date(growth.first_snapshot).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
+                    : '—'}
+                </p>
+                <p className="text-xs text-zinc-500">premier snapshot</p>
+              </Card>
+              <Card>
+                <p className="text-xs text-zinc-500 mb-1">Prochain snapshot</p>
+                <p className="text-lg font-bold text-zinc-300">23:01 UTC</p>
+                <p className="text-xs text-zinc-500">collecte quotidienne</p>
+              </Card>
+            </>
+          )}
         </div>
       )}
 
@@ -266,8 +290,11 @@ export default function ChannelDetail() {
               </LineChart>
             </ResponsiveContainer>
           ) : (
-            <div className="flex items-center justify-center h-64 text-zinc-500">
-              No subscriber history available
+            <div className="flex flex-col items-center justify-center h-64 text-zinc-500 gap-2">
+              <p className="text-sm">Pas encore d'historique d'abonnés</p>
+              <p className="text-xs text-zinc-600">
+                Les données apparaîtront après le prochain snapshot quotidien (23:01 UTC)
+              </p>
             </div>
           )}
         </Card>
