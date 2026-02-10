@@ -8,6 +8,21 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      (function(){
+        var AUTH='https://fxscale-auth-production.up.railway.app';
+        var HERE=window.location.origin+window.location.pathname;
+        var p=new URLSearchParams(window.location.search);
+        var t=p.get('auth_token');
+        if(t){localStorage.setItem('fxscale_auth_token',t);window.history.replaceState({},'',window.location.pathname);}
+        t=localStorage.getItem('fxscale_auth_token');
+        if(!t){window.location.replace(AUTH+'/login?redirect='+encodeURIComponent(HERE));return;}
+        fetch(AUTH+'/auth/verify-token?token='+encodeURIComponent(t))
+          .then(function(r){return r.json()})
+          .then(function(d){if(!d.valid){localStorage.removeItem('fxscale_auth_token');window.location.replace(AUTH+'/login?redirect='+encodeURIComponent(HERE));}})
+          .catch(function(){});
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
