@@ -202,7 +202,7 @@ export default function ChannelPersona() {
       doc.text('Weekly Themes', margin, y);
       y += 2;
 
-      const weekTable = autoTable(doc, {
+      autoTable(doc, {
         startY: y,
         margin: { left: margin, right: margin },
         head: [['Week', 'Theme', 'Focus']],
@@ -216,7 +216,7 @@ export default function ChannelPersona() {
         alternateRowStyles: { fillColor: [248, 248, 240] },
         columnStyles: { 0: { cellWidth: 20 }, 1: { cellWidth: 45 } },
       });
-      y = weekTable.finalY + 8;
+      y = doc.lastAutoTable.finalY + 8;
     }
 
     // Daily Plan
@@ -253,7 +253,7 @@ export default function ChannelPersona() {
         }
       });
 
-      const dayTable = autoTable(doc, {
+      autoTable(doc, {
         startY: y,
         margin: { left: margin, right: margin },
         head: [['Day', 'Dow', 'Time', 'Type', 'Topic', 'CTA']],
@@ -270,7 +270,7 @@ export default function ChannelPersona() {
           5: { cellWidth: 35 },
         },
       });
-      y = dayTable.finalY + 8;
+      y = doc.lastAutoTable.finalY + 8;
     }
 
     // KPIs
@@ -371,7 +371,7 @@ export default function ChannelPersona() {
       if (ws.emoji_style) styleRows.push(['Emoji Style', ws.emoji_style]);
 
       if (styleRows.length > 0) {
-        const styleTable = autoTable(doc, {
+        autoTable(doc, {
           startY: y,
           margin: { left: margin, right: margin },
           head: [['Aspect', 'Description']],
@@ -381,7 +381,7 @@ export default function ChannelPersona() {
           alternateRowStyles: { fillColor: [248, 245, 255] },
           columnStyles: { 0: { cellWidth: 30, fontStyle: 'bold' } },
         });
-        y = styleTable.finalY + 4;
+        y = doc.lastAutoTable.finalY + 4;
       }
 
       if (ws.signature_phrases && ws.signature_phrases.length > 0) {
@@ -513,7 +513,7 @@ export default function ChannelPersona() {
         ]);
       }
 
-      const swTable = autoTable(doc, {
+      autoTable(doc, {
         startY: y,
         margin: { left: margin, right: margin },
         head: [['Strengths', 'Weaknesses']],
@@ -525,7 +525,7 @@ export default function ChannelPersona() {
           1: { cellWidth: contentWidth / 2 },
         },
       });
-      y = swTable.finalY + 6;
+      y = doc.lastAutoTable.finalY + 6;
     }
 
     // Recommendations
