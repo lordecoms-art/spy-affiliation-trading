@@ -15,7 +15,10 @@ import {
   Sparkles,
   RefreshCw,
   Smartphone,
+  Download,
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 import {
   BarChart,
   Bar,
@@ -138,6 +141,170 @@ export default function ChannelPersona() {
       setPlanError('Erreur de génération. Vérifiez la connexion et réessayez.');
     }
     setPlanLoading(false);
+  };
+
+  const exportPlanToPdf = () => {
+    if (!plan) return;
+
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 15;
+    const contentWidth = pageWidth - margin * 2;
+    let y = 20;
+
+    const addPageIfNeeded = (needed = 20) => {
+      if (y + needed > doc.internal.pageSize.getHeight() - 15) {
+        doc.addPage();
+        y = 20;
+      }
+    };
+
+    // Title
+    doc.setFontSize(20);
+    doc.setTextColor(40, 40, 40);
+    doc.text('30-Day Content Plan', pageWidth / 2, y, { align: 'center' });
+    y += 8;
+
+    // Channel name
+    doc.setFontSize(12);
+    doc.setTextColor(120, 120, 120);
+    doc.text(channel.title || 'Channel', pageWidth / 2, y, { align: 'center' });
+    y += 4;
+
+    // Date
+    doc.setFontSize(9);
+    doc.text(`Generated: ${new Date().toLocaleDateString('fr-FR')}`, pageWidth / 2, y, { align: 'center' });
+    y += 10;
+
+    // Separator
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 8;
+
+    // Strategy Overview
+    if (plan.plan_summary) {
+      doc.setFontSize(13);
+      doc.setTextColor(180, 130, 20);
+      doc.text('Strategy Overview', margin, y);
+      y += 6;
+      doc.setFontSize(10);
+      doc.setTextColor(60, 60, 60);
+      const summaryLines = doc.splitTextToSize(plan.plan_summary, contentWidth);
+      doc.text(summaryLines, margin, y);
+      y += summaryLines.length * 5 + 6;
+    }
+
+    // Weekly Themes
+    if (plan.weekly_themes && plan.weekly_themes.length > 0) {
+      addPageIfNeeded(30);
+      doc.setFontSize(13);
+      doc.setTextColor(180, 130, 20);
+      doc.text('Weekly Themes', margin, y);
+      y += 2;
+
+      doc.autoTable({
+        startY: y,
+        margin: { left: margin, right: margin },
+        head: [['Week', 'Theme', 'Focus']],
+        body: plan.weekly_themes.map((w) => [
+          `Week ${w.week}`,
+          w.theme || '',
+          w.focus || '',
+        ]),
+        styles: { fontSize: 9, cellPadding: 3, textColor: [50, 50, 50] },
+        headStyles: { fillColor: [180, 130, 20], textColor: [255, 255, 255], fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [248, 248, 240] },
+        columnStyles: { 0: { cellWidth: 20 }, 1: { cellWidth: 45 } },
+      });
+      y = doc.lastAutoTable.finalY + 8;
+    }
+
+    // Daily Plan
+    if (plan.daily_plan && plan.daily_plan.length > 0) {
+      addPageIfNeeded(20);
+      doc.setFontSize(13);
+      doc.setTextColor(180, 130, 20);
+      doc.text(`Daily Schedule (${plan.daily_plan.length} days)`, margin, y);
+      y += 2;
+
+      const rows = [];
+      plan.daily_plan.forEach((day) => {
+        const posts = day.posts || [];
+        if (posts.length === 0) {
+          rows.push([
+            `J${day.day}`,
+            day.day_of_week || day.dow || '',
+            '-',
+            '-',
+            '-',
+            '-',
+          ]);
+        } else {
+          posts.forEach((post, i) => {
+            rows.push([
+              i === 0 ? `J${day.day}` : '',
+              i === 0 ? (day.day_of_week || day.dow || '') : '',
+              post.time || '',
+              post.type || 'text',
+              post.content_brief || post.topic || '',
+              post.cta || '-',
+            ]);
+          });
+        }
+      });
+
+      doc.autoTable({
+        startY: y,
+        margin: { left: margin, right: margin },
+        head: [['Day', 'Dow', 'Time', 'Type', 'Topic', 'CTA']],
+        body: rows,
+        styles: { fontSize: 8, cellPadding: 2.5, textColor: [50, 50, 50], overflow: 'linebreak' },
+        headStyles: { fillColor: [180, 130, 20], textColor: [255, 255, 255], fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [248, 248, 240] },
+        columnStyles: {
+          0: { cellWidth: 12, fontStyle: 'bold' },
+          1: { cellWidth: 14 },
+          2: { cellWidth: 14 },
+          3: { cellWidth: 16 },
+          4: { cellWidth: 'auto' },
+          5: { cellWidth: 35 },
+        },
+      });
+      y = doc.lastAutoTable.finalY + 8;
+    }
+
+    // KPIs
+    if (plan.kpis && plan.kpis.length > 0) {
+      addPageIfNeeded(20);
+      doc.setFontSize(13);
+      doc.setTextColor(180, 130, 20);
+      doc.text('KPIs to Track', margin, y);
+      y += 6;
+      doc.setFontSize(10);
+      doc.setTextColor(60, 60, 60);
+      plan.kpis.forEach((kpi) => {
+        addPageIfNeeded(6);
+        doc.text(`•  ${kpi}`, margin + 2, y);
+        y += 5;
+      });
+    }
+
+    // Footer on each page
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(160, 160, 160);
+      doc.text(
+        `Page ${i}/${totalPages}  —  Spy Affiliation Trading`,
+        pageWidth / 2,
+        doc.internal.pageSize.getHeight() - 8,
+        { align: 'center' }
+      );
+    }
+
+    const filename = `plan-30j-${(channel.title || 'channel').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+    doc.save(filename);
   };
 
   if (loading || !persona) {
@@ -751,8 +918,15 @@ export default function ChannelPersona() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Regenerate */}
-            <div className="flex justify-end">
+            {/* Actions */}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={exportPlanToPdf}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-amber-400 hover:text-amber-300 border border-amber-500/30 rounded-lg hover:bg-amber-500/10 transition-colors"
+              >
+                <Download className="w-4 h-4" />
+                Export PDF
+              </button>
               <button
                 onClick={generatePlan}
                 disabled={planLoading}
