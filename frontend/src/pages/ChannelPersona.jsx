@@ -95,6 +95,7 @@ export default function ChannelPersona() {
   const [aiPersona, setAiPersona] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [plan, setPlan] = useState(null);
+  const [referenceMessages, setReferenceMessages] = useState(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState(null);
 
@@ -133,6 +134,7 @@ export default function ChannelPersona() {
         setPlanError(response.data.error || 'Erreur de génération, réessayez.');
       } else if (response.data.plan) {
         setPlan(response.data.plan);
+        setReferenceMessages(response.data.reference_messages || null);
       } else {
         setPlanError('Réponse invalide du serveur. Réessayez.');
       }
@@ -141,6 +143,113 @@ export default function ChannelPersona() {
       setPlanError('Erreur de génération. Vérifiez la connexion et réessayez.');
     }
     setPlanLoading(false);
+  };
+
+  // Draw a print-friendly Telegram-style message bubble in the PDF.
+  // Returns the total height consumed.
+  const drawTelegramBubble = (doc, msg, x, y, width, channelTitle) => {
+    if (!msg) return 0;
+
+    const pad = 3;
+    const inner = width - pad * 2;
+
+    // Strip emojis (jsPDF default fonts can't render them)
+    const stripEmoji = (str) =>
+      (str || '').replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{200D}\u{FE0F}]/gu, '');
+
+    // --- Phase 1: MEASURE height ---
+    let h = pad;
+    h += 5; // channel name
+
+    if (msg.content_type && msg.content_type !== 'text') h += 4;
+    if (msg.forward_from) h += 4;
+
+    let textLines = [];
+    const cleanText = stripEmoji(msg.text_content).trim();
+    if (cleanText) {
+      doc.setFontSize(7.5);
+      textLines = doc.splitTextToSize(cleanText, inner);
+      h += Math.min(textLines.length, 8) * 3.5;
+      if (textLines.length > 8) h += 3.5;
+    }
+
+    let reactions = [];
+    try { if (msg.reactions_json) reactions = JSON.parse(msg.reactions_json); } catch {}
+    if (reactions.length > 0) h += 4.5;
+
+    h += 5; // footer
+    h += pad;
+
+    // --- Phase 2: DRAW background ---
+    doc.setFillColor(242, 242, 247);
+    doc.setDrawColor(210, 210, 215);
+    doc.roundedRect(x, y, width, h, 2, 2, 'FD');
+
+    // --- Phase 3: DRAW content ---
+    let cy = y + pad;
+
+    // Channel name
+    doc.setFontSize(7);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(50, 100, 180);
+    doc.text(channelTitle || 'Channel', x + pad, cy + 3);
+    cy += 5;
+
+    // Content type badge
+    if (msg.content_type && msg.content_type !== 'text') {
+      doc.setFontSize(6.5);
+      doc.setFont(undefined, 'normal');
+      doc.setTextColor(130, 90, 200);
+      const labels = { photo: '[ Photo ]', video: '[ Video ]', voice: '[ Voice ]', document: '[ Document ]' };
+      doc.text(labels[msg.content_type] || `[ ${msg.content_type} ]`, x + pad, cy + 2.5);
+      cy += 4;
+    }
+
+    // Forward header
+    if (msg.forward_from) {
+      doc.setFontSize(6);
+      doc.setFont(undefined, 'italic');
+      doc.setTextColor(100, 140, 200);
+      doc.text(`Forwarded from ${stripEmoji(msg.forward_from)}`, x + pad, cy + 2.5);
+      cy += 4;
+    }
+
+    // Message text
+    if (cleanText) {
+      doc.setFontSize(7.5);
+      doc.setFont(undefined, 'normal');
+      doc.setTextColor(30, 30, 30);
+      const maxLines = Math.min(textLines.length, 8);
+      for (let i = 0; i < maxLines; i++) {
+        doc.text(textLines[i], x + pad, cy + 3);
+        cy += 3.5;
+      }
+      if (textLines.length > 8) {
+        doc.setTextColor(120, 120, 120);
+        doc.text('...', x + pad, cy + 3);
+        cy += 3.5;
+      }
+    }
+
+    // Reactions
+    if (reactions.length > 0) {
+      cy += 1;
+      doc.setFontSize(6);
+      doc.setTextColor(80, 80, 80);
+      const reactStr = reactions.slice(0, 5).map((r) => `${stripEmoji(r.emoji || '')} ${r.count}`).join('   ');
+      doc.text(reactStr, x + pad, cy + 2.5);
+      cy += 3.5;
+    }
+
+    // Footer: views + time
+    cy += 1;
+    doc.setFontSize(6);
+    doc.setTextColor(140, 140, 140);
+    const views = msg.views_count >= 1000 ? `${(msg.views_count / 1000).toFixed(1)}K views` : `${msg.views_count || 0} views`;
+    const time = msg.posted_at ? new Date(msg.posted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    doc.text(`${views}  ${time}`, x + width - pad, cy + 2.5, { align: 'right' });
+
+    return h;
   };
 
   const exportPlanToPdf = () => {
@@ -225,52 +334,76 @@ export default function ChannelPersona() {
       doc.setFontSize(13);
       doc.setTextColor(180, 130, 20);
       doc.text(`Daily Schedule (${plan.daily_plan.length} days)`, margin, y);
-      y += 2;
+      y += 8;
 
-      const rows = [];
+      // Build ref_index -> message lookup
+      const refMap = {};
+      if (referenceMessages) {
+        referenceMessages.forEach((rm) => { refMap[rm.ref_index] = rm; });
+      }
+      const hasRefs = referenceMessages && referenceMessages.length > 0;
+
       plan.daily_plan.forEach((day) => {
         const posts = day.posts || [];
-        if (posts.length === 0) {
-          rows.push([
-            `J${day.day}`,
-            day.day_of_week || day.dow || '',
-            '-',
-            '-',
-            '-',
-            '-',
-          ]);
-        } else {
-          posts.forEach((post, i) => {
-            rows.push([
-              i === 0 ? `J${day.day}` : '',
-              i === 0 ? (day.day_of_week || day.dow || '') : '',
-              post.time || '',
-              post.type || 'text',
-              post.content_brief || post.topic || '',
-              post.cta || '-',
-            ]);
-          });
-        }
-      });
 
-      autoTable(doc, {
-        startY: y,
-        margin: { left: margin, right: margin },
-        head: [['Day', 'Dow', 'Time', 'Type', 'Topic', 'CTA']],
-        body: rows,
-        styles: { fontSize: 8, cellPadding: 2.5, textColor: [50, 50, 50], overflow: 'linebreak' },
-        headStyles: { fillColor: [180, 130, 20], textColor: [255, 255, 255], fontStyle: 'bold' },
-        alternateRowStyles: { fillColor: [248, 248, 240] },
-        columnStyles: {
-          0: { cellWidth: 12, fontStyle: 'bold' },
-          1: { cellWidth: 14 },
-          2: { cellWidth: 14 },
-          3: { cellWidth: 16 },
-          4: { cellWidth: 'auto' },
-          5: { cellWidth: 35 },
-        },
+        // Day header
+        addPageIfNeeded(15);
+        doc.setFillColor(250, 245, 230);
+        doc.rect(margin, y, contentWidth, 7, 'F');
+        doc.setFontSize(10);
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(180, 130, 20);
+        doc.text(`J${day.day} - ${day.day_of_week || day.dow || ''}`, margin + 3, y + 5);
+        doc.setFont(undefined, 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(140, 130, 100);
+        doc.text(`${posts.length} post${posts.length > 1 ? 's' : ''}`, margin + contentWidth - 3, y + 5, { align: 'right' });
+        y += 9;
+
+        posts.forEach((post) => {
+          // Check if bubble will fit, add page if needed
+          addPageIfNeeded(hasRefs && post.ref && refMap[post.ref] ? 55 : 18);
+
+          // Post info
+          doc.setFontSize(9);
+          doc.setFont(undefined, 'bold');
+          doc.setTextColor(50, 50, 50);
+          doc.text(`${post.time || ''}  |  ${post.type || 'text'}`, margin + 2, y + 4);
+          y += 5;
+
+          doc.setFontSize(8.5);
+          doc.setFont(undefined, 'normal');
+          doc.setTextColor(60, 60, 60);
+          const topicLines = doc.splitTextToSize(post.content_brief || post.topic || '', contentWidth - 4);
+          doc.text(topicLines, margin + 2, y + 3.5);
+          y += topicLines.length * 4 + 1;
+
+          if (post.cta) {
+            doc.setFontSize(7.5);
+            doc.setTextColor(0, 130, 130);
+            doc.text(`CTA: ${post.cta}`, margin + 2, y + 3);
+            y += 4;
+          }
+
+          // Reference message bubble
+          const refMsg = post.ref ? refMap[post.ref] : null;
+          if (refMsg) {
+            y += 2;
+            addPageIfNeeded(35);
+            doc.setFontSize(6.5);
+            doc.setTextColor(150, 150, 150);
+            doc.text('Reference message:', margin + 2, y + 2.5);
+            y += 4;
+
+            const bubbleH = drawTelegramBubble(doc, refMsg, margin + 4, y, contentWidth - 8, channel.title);
+            y += bubbleH + 3;
+          }
+
+          y += 3;
+        });
+
+        y += 2;
       });
-      y = doc.lastAutoTable.finalY + 8;
     }
 
     // KPIs

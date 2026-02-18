@@ -694,26 +694,27 @@ def generate_content_plan(
     rhythm = _compute_publication_rhythm(db, channel_id)
     structure = _compute_message_structure(db, channel_id)
 
-    # Get top performing messages as reference
+    # Get top performing messages as reference (30 for plan references)
     top_messages = (
-        db.query(Message.text_content, Message.views_count, Message.content_type)
+        db.query(Message)
         .filter(
             Message.channel_id == channel_id,
             Message.text_content.isnot(None),
             Message.text_content != "",
         )
         .order_by(Message.views_count.desc())
-        .limit(10)
+        .limit(30)
         .all()
     )
 
     top_msgs_context = "\n".join(
-        "- [{}] ({} views): {}".format(
-            m.content_type or "text",
-            m.views_count or 0,
-            (m.text_content[:150] + "...") if len(m.text_content or "") > 150 else m.text_content,
+        "[{idx}] ({ctype}, {views} views): {text}".format(
+            idx=i,
+            ctype=m.content_type or "text",
+            views=m.views_count or 0,
+            text=(m.text_content[:300] + "...") if len(m.text_content or "") > 300 else m.text_content,
         )
-        for m in top_messages
+        for i, m in enumerate(top_messages, 1)
     )
 
     hooks_str = ", ".join(
@@ -744,7 +745,7 @@ def generate_content_plan(
         '  ],\n'
         '  "daily_plan": [\n'
         '    {{"day": 1, "dow": "Mon", "posts": [\n'
-        '      {{"time": "10:00", "type": "text", "topic": "short topic", "cta": "short cta or null"}}\n'
+        '      {{"time": "10:00", "type": "text", "topic": "short topic", "cta": "short cta or null", "ref": 1}}\n'
         '    ]}}\n'
         '  ],\n'
         '  "kpis": ["kpi1", "kpi2"]\n'
@@ -752,6 +753,7 @@ def generate_content_plan(
         "IMPORTANT RULES:\n"
         "- Create ALL 30 days. Match {avg_posts} posts/day avg.\n"
         "- Keep topic to MAX 10 words. Keep cta to MAX 8 words or null.\n"
+        "- For each post, set 'ref' to the number [1]-[{msg_count}] of the reference message that best matches or inspired this post.\n"
         "- Use 3-letter day abbreviations (Mon, Tue, Wed, Thu, Fri, Sat, Sun).\n"
         "- Return ONLY valid JSON, no markdown, no backticks.\n"
         "- Write in the same language as the channel content.\n"
@@ -764,6 +766,7 @@ def generate_content_plan(
         ctas=cta_str or "N/A",
         eng=structure.get("avg_engagement", 0),
         top_msgs=top_msgs_context or "No top messages available",
+        msg_count=len(top_messages),
     )
 
     try:
@@ -788,7 +791,22 @@ def generate_content_plan(
             raw_text = _repair_truncated_json(raw_text)
 
         plan = json.loads(raw_text)
-        return {"status": "success", "plan": plan}
+
+        # Build reference messages for PDF export
+        ref_messages = []
+        for i, m in enumerate(top_messages, 1):
+            ref_messages.append({
+                "ref_index": i,
+                "text_content": (m.text_content[:300] + "...") if len(m.text_content or "") > 300 else m.text_content,
+                "content_type": m.content_type,
+                "views_count": m.views_count or 0,
+                "forwards_count": m.forwards_count or 0,
+                "reactions_json": m.reactions_json,
+                "posted_at": m.posted_at.isoformat() if m.posted_at else None,
+                "forward_from": m.forward_from,
+            })
+
+        return {"status": "success", "plan": plan, "reference_messages": ref_messages}
 
     except json.JSONDecodeError as e:
         logger.error("Failed to parse plan JSON: {}".format(e))
@@ -796,7 +814,21 @@ def generate_content_plan(
         try:
             repaired = _repair_truncated_json(raw_text)
             plan = json.loads(repaired)
-            return {"status": "success", "plan": plan}
+
+            ref_messages = []
+            for i, m in enumerate(top_messages, 1):
+                ref_messages.append({
+                    "ref_index": i,
+                    "text_content": (m.text_content[:300] + "...") if len(m.text_content or "") > 300 else m.text_content,
+                    "content_type": m.content_type,
+                    "views_count": m.views_count or 0,
+                    "forwards_count": m.forwards_count or 0,
+                    "reactions_json": m.reactions_json,
+                    "posted_at": m.posted_at.isoformat() if m.posted_at else None,
+                    "forward_from": m.forward_from,
+                })
+
+            return {"status": "success", "plan": plan, "reference_messages": ref_messages}
         except Exception:
             pass
         return {
