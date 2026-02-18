@@ -98,6 +98,7 @@ export default function ChannelPersona() {
   const [referenceMessages, setReferenceMessages] = useState(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   const fetchPersona = useCallback(async () => {
     setLoading(true);
@@ -252,8 +253,43 @@ export default function ChannelPersona() {
     return h;
   };
 
-  const exportPlanToPdf = () => {
+  const exportPlanToPdf = async () => {
     if (!plan) return;
+    setPdfLoading(true);
+
+    // Always fetch channel messages for reference bubbles
+    let msgList = [];
+    try {
+      const feedResp = await api.get(`/messages/feed/${id}`, { params: { skip: 0, limit: 50 } });
+      msgList = (feedResp.data.messages || []).filter((m) => m.text_content && m.text_content.trim());
+    } catch (e) {
+      console.error('Failed to fetch messages for PDF:', e);
+    }
+
+    // Build a matcher: group messages by content_type, round-robin assign
+    const byType = {};
+    msgList.forEach((m) => {
+      const t = m.content_type || 'text';
+      if (!byType[t]) byType[t] = [];
+      byType[t].push(m);
+    });
+    const typeCounters = {};
+
+    const getRefMessage = (post) => {
+      // If plan has explicit ref from backend, use it
+      if (post.ref && referenceMessages) {
+        const found = referenceMessages.find((rm) => rm.ref_index === post.ref);
+        if (found) return found;
+      }
+      // Otherwise match by content_type round-robin
+      const t = post.type || 'text';
+      const pool = byType[t] || byType['text'] || msgList;
+      if (!pool || pool.length === 0) return null;
+      if (!typeCounters[t]) typeCounters[t] = 0;
+      const msg = pool[typeCounters[t] % pool.length];
+      typeCounters[t]++;
+      return msg;
+    };
 
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -328,20 +364,13 @@ export default function ChannelPersona() {
       y = doc.lastAutoTable.finalY + 8;
     }
 
-    // Daily Plan
+    // Daily Plan with Telegram reference bubbles
     if (plan.daily_plan && plan.daily_plan.length > 0) {
       addPageIfNeeded(20);
       doc.setFontSize(13);
       doc.setTextColor(180, 130, 20);
       doc.text(`Daily Schedule (${plan.daily_plan.length} days)`, margin, y);
       y += 8;
-
-      // Build ref_index -> message lookup
-      const refMap = {};
-      if (referenceMessages) {
-        referenceMessages.forEach((rm) => { refMap[rm.ref_index] = rm; });
-      }
-      const hasRefs = referenceMessages && referenceMessages.length > 0;
 
       plan.daily_plan.forEach((day) => {
         const posts = day.posts || [];
@@ -361,8 +390,7 @@ export default function ChannelPersona() {
         y += 9;
 
         posts.forEach((post) => {
-          // Check if bubble will fit, add page if needed
-          addPageIfNeeded(hasRefs && post.ref && refMap[post.ref] ? 55 : 18);
+          addPageIfNeeded(55);
 
           // Post info
           doc.setFontSize(9);
@@ -385,14 +413,16 @@ export default function ChannelPersona() {
             y += 4;
           }
 
-          // Reference message bubble
-          const refMsg = post.ref ? refMap[post.ref] : null;
+          // Reference message bubble (always shown)
+          const refMsg = getRefMessage(post);
           if (refMsg) {
             y += 2;
             addPageIfNeeded(35);
             doc.setFontSize(6.5);
             doc.setTextColor(150, 150, 150);
-            doc.text('Reference message:', margin + 2, y + 2.5);
+            doc.setFont(undefined, 'italic');
+            doc.text('Telegram reference:', margin + 2, y + 2.5);
+            doc.setFont(undefined, 'normal');
             y += 4;
 
             const bubbleH = drawTelegramBubble(doc, refMsg, margin + 4, y, contentWidth - 8, channel.title);
@@ -438,6 +468,7 @@ export default function ChannelPersona() {
 
     const filename = `plan-30j-${(channel.title || 'channel').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
     doc.save(filename);
+    setPdfLoading(false);
   };
 
   const exportPersonaToPdf = () => {
@@ -1314,10 +1345,11 @@ export default function ChannelPersona() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={exportPlanToPdf}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-amber-400 hover:text-amber-300 border border-amber-500/30 rounded-lg hover:bg-amber-500/10 transition-colors"
+                disabled={pdfLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-amber-400 hover:text-amber-300 border border-amber-500/30 rounded-lg hover:bg-amber-500/10 disabled:opacity-50 transition-colors"
               >
-                <Download className="w-4 h-4" />
-                Export PDF
+                {pdfLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                {pdfLoading ? 'Generating...' : 'Export PDF'}
               </button>
               <button
                 onClick={generatePlan}
