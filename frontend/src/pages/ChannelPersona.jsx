@@ -307,6 +307,258 @@ export default function ChannelPersona() {
     doc.save(filename);
   };
 
+  const exportPersonaToPdf = () => {
+    if (!aiPersona) return;
+
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 15;
+    const contentWidth = pageWidth - margin * 2;
+    let y = 20;
+
+    const addPageIfNeeded = (needed = 20) => {
+      if (y + needed > doc.internal.pageSize.getHeight() - 15) {
+        doc.addPage();
+        y = 20;
+      }
+    };
+
+    const sectionTitle = (text) => {
+      addPageIfNeeded(15);
+      doc.setFontSize(13);
+      doc.setTextColor(120, 80, 200);
+      doc.text(text, margin, y);
+      y += 7;
+    };
+
+    // Title
+    doc.setFontSize(20);
+    doc.setTextColor(40, 40, 40);
+    doc.text('AI Persona Synthesis', pageWidth / 2, y, { align: 'center' });
+    y += 8;
+
+    doc.setFontSize(12);
+    doc.setTextColor(120, 120, 120);
+    doc.text(channel.title || 'Channel', pageWidth / 2, y, { align: 'center' });
+    y += 4;
+
+    doc.setFontSize(9);
+    doc.text(`Generated: ${new Date().toLocaleDateString('fr-FR')}`, pageWidth / 2, y, { align: 'center' });
+    y += 10;
+
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 8;
+
+    // Persona Summary
+    if (aiPersona.persona_summary) {
+      sectionTitle('Persona Summary');
+      doc.setFontSize(10);
+      doc.setTextColor(60, 60, 60);
+      const lines = doc.splitTextToSize(aiPersona.persona_summary, contentWidth);
+      doc.text(lines, margin, y);
+      y += lines.length * 5 + 6;
+    }
+
+    // Writing Style
+    if (aiPersona.writing_style) {
+      sectionTitle('Writing Style');
+      const ws = aiPersona.writing_style;
+      const styleRows = [];
+      if (ws.tone_description) styleRows.push(['Tone', ws.tone_description]);
+      if (ws.formatting_habits) styleRows.push(['Formatting', ws.formatting_habits]);
+      if (ws.language) styleRows.push(['Language', ws.language]);
+      if (ws.emoji_style) styleRows.push(['Emoji Style', ws.emoji_style]);
+
+      if (styleRows.length > 0) {
+        doc.autoTable({
+          startY: y,
+          margin: { left: margin, right: margin },
+          head: [['Aspect', 'Description']],
+          body: styleRows,
+          styles: { fontSize: 9, cellPadding: 3, textColor: [50, 50, 50] },
+          headStyles: { fillColor: [120, 80, 200], textColor: [255, 255, 255], fontStyle: 'bold' },
+          alternateRowStyles: { fillColor: [248, 245, 255] },
+          columnStyles: { 0: { cellWidth: 30, fontStyle: 'bold' } },
+        });
+        y = doc.lastAutoTable.finalY + 4;
+      }
+
+      if (ws.signature_phrases && ws.signature_phrases.length > 0) {
+        addPageIfNeeded(10);
+        doc.setFontSize(9);
+        doc.setTextColor(100, 100, 100);
+        doc.text('Signature Phrases:', margin, y);
+        y += 5;
+        doc.setTextColor(60, 60, 60);
+        ws.signature_phrases.forEach((phrase) => {
+          addPageIfNeeded(6);
+          const lines = doc.splitTextToSize(`"${phrase}"`, contentWidth - 5);
+          doc.text(lines, margin + 3, y);
+          y += lines.length * 4.5 + 2;
+        });
+        y += 3;
+      }
+    }
+
+    // Content Templates
+    if (aiPersona.content_templates && aiPersona.content_templates.length > 0) {
+      sectionTitle('Content Templates');
+      aiPersona.content_templates.forEach((tpl) => {
+        addPageIfNeeded(25);
+        doc.setFontSize(10);
+        doc.setTextColor(40, 40, 40);
+        doc.text(tpl.name || 'Template', margin, y);
+        y += 5;
+
+        if (tpl.description) {
+          doc.setFontSize(9);
+          doc.setTextColor(80, 80, 80);
+          const descLines = doc.splitTextToSize(tpl.description, contentWidth - 5);
+          doc.text(descLines, margin + 2, y);
+          y += descLines.length * 4.5 + 2;
+        }
+
+        if (tpl.structure) {
+          doc.setFontSize(8);
+          doc.setTextColor(100, 100, 100);
+          doc.setFillColor(245, 245, 245);
+          const structLines = doc.splitTextToSize(tpl.structure, contentWidth - 10);
+          const blockH = structLines.length * 4 + 4;
+          addPageIfNeeded(blockH + 2);
+          doc.rect(margin + 2, y - 2, contentWidth - 4, blockH, 'F');
+          doc.text(structLines, margin + 5, y + 1);
+          y += blockH + 2;
+        }
+
+        if (tpl.example_summary) {
+          doc.setFontSize(8);
+          doc.setTextColor(130, 130, 130);
+          const exLines = doc.splitTextToSize(`Ex: ${tpl.example_summary}`, contentWidth - 5);
+          doc.text(exLines, margin + 2, y);
+          y += exLines.length * 4 + 4;
+        }
+        y += 2;
+      });
+    }
+
+    // Content Strategy
+    if (aiPersona.content_strategy) {
+      sectionTitle('Content Strategy');
+      const cs = aiPersona.content_strategy;
+
+      if (cs.main_topics && cs.main_topics.length > 0) {
+        doc.setFontSize(9);
+        doc.setTextColor(100, 100, 100);
+        doc.text('Main Topics:', margin, y);
+        y += 5;
+        doc.setTextColor(60, 60, 60);
+        const topicsText = cs.main_topics.join('  •  ');
+        const topicLines = doc.splitTextToSize(topicsText, contentWidth - 5);
+        doc.text(topicLines, margin + 3, y);
+        y += topicLines.length * 4.5 + 4;
+      }
+
+      if (cs.posting_sequences && cs.posting_sequences.length > 0) {
+        addPageIfNeeded(10);
+        doc.setFontSize(9);
+        doc.setTextColor(100, 100, 100);
+        doc.text('Posting Sequences:', margin, y);
+        y += 5;
+        doc.setTextColor(60, 60, 60);
+        cs.posting_sequences.forEach((seq) => {
+          addPageIfNeeded(6);
+          const lines = doc.splitTextToSize(`→ ${seq}`, contentWidth - 5);
+          doc.text(lines, margin + 3, y);
+          y += lines.length * 4.5 + 2;
+        });
+        y += 3;
+      }
+
+      if (cs.weekly_pattern_analysis) {
+        addPageIfNeeded(10);
+        doc.setFontSize(9);
+        doc.setTextColor(100, 100, 100);
+        doc.text('Weekly Pattern:', margin, y);
+        y += 5;
+        doc.setTextColor(60, 60, 60);
+        const wpLines = doc.splitTextToSize(cs.weekly_pattern_analysis, contentWidth - 5);
+        doc.text(wpLines, margin + 3, y);
+        y += wpLines.length * 4.5 + 4;
+      }
+
+      if (cs.promotional_vs_value_ratio) {
+        addPageIfNeeded(10);
+        doc.setFontSize(9);
+        doc.setTextColor(100, 100, 100);
+        doc.text('Promo vs Value Ratio:', margin, y);
+        y += 5;
+        doc.setTextColor(60, 60, 60);
+        const prLines = doc.splitTextToSize(cs.promotional_vs_value_ratio, contentWidth - 5);
+        doc.text(prLines, margin + 3, y);
+        y += prLines.length * 4.5 + 4;
+      }
+    }
+
+    // Strengths & Weaknesses
+    if ((aiPersona.strengths && aiPersona.strengths.length > 0) || (aiPersona.weaknesses && aiPersona.weaknesses.length > 0)) {
+      sectionTitle('Strengths & Weaknesses');
+
+      const rows = [];
+      const maxLen = Math.max(aiPersona.strengths?.length || 0, aiPersona.weaknesses?.length || 0);
+      for (let i = 0; i < maxLen; i++) {
+        rows.push([
+          aiPersona.strengths?.[i] ? `+ ${aiPersona.strengths[i]}` : '',
+          aiPersona.weaknesses?.[i] ? `- ${aiPersona.weaknesses[i]}` : '',
+        ]);
+      }
+
+      doc.autoTable({
+        startY: y,
+        margin: { left: margin, right: margin },
+        head: [['Strengths', 'Weaknesses']],
+        body: rows,
+        styles: { fontSize: 9, cellPadding: 3, textColor: [50, 50, 50], overflow: 'linebreak' },
+        headStyles: { fillColor: [120, 80, 200], textColor: [255, 255, 255], fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: contentWidth / 2 },
+          1: { cellWidth: contentWidth / 2 },
+        },
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+
+    // Recommendations
+    if (aiPersona.recommendations && aiPersona.recommendations.length > 0) {
+      sectionTitle('Recommendations');
+      doc.setFontSize(10);
+      doc.setTextColor(60, 60, 60);
+      aiPersona.recommendations.forEach((r, i) => {
+        addPageIfNeeded(10);
+        const lines = doc.splitTextToSize(`${i + 1}. ${r}`, contentWidth - 5);
+        doc.text(lines, margin + 2, y);
+        y += lines.length * 5 + 3;
+      });
+    }
+
+    // Footer
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(160, 160, 160);
+      doc.text(
+        `Page ${i}/${totalPages}  —  Spy Affiliation Trading`,
+        pageWidth / 2,
+        doc.internal.pageSize.getHeight() - 8,
+        { align: 'center' }
+      );
+    }
+
+    const filename = `persona-${(channel.title || 'channel').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+    doc.save(filename);
+  };
+
   if (loading || !persona) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -701,8 +953,15 @@ export default function ChannelPersona() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Regenerate button */}
-            <div className="flex justify-end">
+            {/* Actions */}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={exportPersonaToPdf}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-violet-400 hover:text-violet-300 border border-violet-500/30 rounded-lg hover:bg-violet-500/10 transition-colors"
+              >
+                <Download className="w-4 h-4" />
+                Export PDF
+              </button>
               <button
                 onClick={generateAiPersona}
                 disabled={aiLoading}
